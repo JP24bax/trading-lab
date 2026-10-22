@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="es">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TradingLab</title>
+  <meta name="description"
+    content="Laboratorio web para crear, probar y comparar estrategias de trading sin programar.">
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+  <header class="topbar">
+    <div class="marca">
+      <!-- Logo propio: matraz con línea de gráfica dentro. -->
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M9 3h6M10 3v5l-5.5 9.5A2 2 0 0 0 6.2 21h11.6a2 2 0 0 0 1.7-3.5L14 8V3" stroke="var(--accent)"
+          stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+        <path d="M7.5 16.5l2.5-3 2 2 3.5-4.5" stroke="#22d3a7" stroke-width="1.8" stroke-linecap="round"
+          stroke-linejoin="round" />
+      </svg>
+      <h1>TradingLab</h1>
+    </div>
+    <nav class="pestanas" aria-label="Zonas de la app">
+      <button class="pestana activa" data-zona="laboratorio">Laboratorio</button>
+      <button class="pestana" data-zona="probador">Probador</button>
+      <button class="pestana" data-zona="optimizador">Optimizador</button>
+      <button class="pestana" data-zona="exportar">Exportar</button>
+    </nav>
+  </header>
+
+  <main id="app">
+    <!-- Zona Laboratorio: generador (próximamente) + ranking. -->
+    <section id="zona-laboratorio" class="zona">
+      <div class="tarjeta" id="tarjeta-generador">
+        <h2>Generador de estrategias</h2>
+        <p class="aviso-proximamente">Crea un lote de <strong id="num-lote">10</strong> estrategias con reglas al azar.
+          Cada una se somete a un mini backtest para darla una puntuación.</p>
+        <button id="boton-generar">Generar lote</button>
+      </div>
+
+      <div class="tarjeta">
+        <h2>Ranking de estrategias</h2>
+        <p class="vacio" id="ranking-vacio">Todavía no hay estrategias. Cuando generes un lote aparecerán aquí,
+          ordenadas de mejor a peor.</p>
+        <table id="tabla-ranking" hidden>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Estrategia</th>
+              <th class="num" data-orden="puntuacion">Puntuación</th>
+              <th class="num" data-orden="beneficio">Beneficio</th>
+              <th class="num" data-orden="drawdown">Drawdown</th>
+              <th class="num" data-orden="acierto">% acierto</th>
+            </tr>
+          </thead>
+          <tbody id="cuerpo-ranking"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Zona Probador: backtest de la estrategia elegida. -->
+    <section id="zona-probador" class="zona" hidden>
+      <div class="tarjeta">
+        <h2>Probador</h2>
+        <p class="vacio" id="probador-vacio">Elige una estrategia en el Laboratorio (haz clic en su fila) para ver aquí
+          su backtest.</p>
+        <div id="probador-contenido" hidden>
+          <div class="probador-cabecera">
+            <div>
+              <h3 id="prob-nombre">—</h3>
+              <p class="regla"><strong>Entra:</strong> <span id="prob-entrada">—</span></p>
+              <p class="regla"><strong>Sale:</strong> <span id="prob-salida">—</span></p>
+            </div>
+            <div class="probador-botones">
+              <label class="campo-capital">Capital inicial:
+                <input id="campo-capital" type="number" min="100" step="100" value="10000">
+              </label>
+              <button id="boton-reprobar">Volver a probar</button>
+              <button id="boton-optimizar">Optimizar</button>
+            </div>
+          </div>
+          <div class="cuadros">
+            <div class="cuadro"><span class="cuadro-etiqueta">Beneficio</span><span class="cuadro-valor"
+                id="prob-beneficio">—</span></div>
+            <div class="cuadro"><span class="cuadro-etiqueta">Drawdown máx.</span><span class="cuadro-valor"
+                id="prob-drawdown">—</span></div>
+            <div class="cuadro"><span class="cuadro-etiqueta">% acierto</span><span class="cuadro-valor"
+                id="prob-acierto">—</span></div>
+            <div class="cuadro"><span class="cuadro-etiqueta">Operaciones</span><span class="cuadro-valor"
+                id="prob-operaciones">—</span></div>
+          </div>
+          <svg id="grafica-capital" viewBox="0 0 600 220" preserveAspectRatio="none" role="img"
+            aria-label="Curva de capital del backtest"></svg>
+          <p class="nota-grafica">Curva de capital sobre 400 velas de mercado simuladas. Línea base = capital inicial.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Zona Optimizador: prueba variaciones de parámetros. -->
+    <section id="zona-optimizador" class="zona" hidden>
+      <div class="tarjeta">
+        <h2>Optimizador</h2>
+        <p class="vacio" id="opt-vacio">Elige una estrategia en el Laboratorio (haz clic en su fila) y pulsa
+          "Optimizar" para probar variaciones de sus parámetros.</p>
+        <div id="opt-contenido" hidden>
+          <div class="probador-cabecera">
+            <div>
+              <h3 id="opt-nombre">—</h3>
+              <p class="regla" id="opt-resumen">—</p>
+            </div>
+            <button id="boton-aplicar" disabled>Aplicar la mejor</button>
+          </div>
+          <table id="opt-tabla">
+            <thead>
+              <tr>
+                <th>Parámetro</th>
+                <th class="num">Valor</th>
+                <th class="num">Puntuación</th>
+                <th class="num">Beneficio</th>
+                <th class="num">Drawdown</th>
+              </tr>
+            </thead>
+            <tbody id="opt-tabla-cuerpo"></tbody>
+          </table>
+          <p class="nota-grafica">Cada fila es una variación de un parámetro de la estrategia, probada sobre las mismas
+            400 velas de mercado.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Zona Exportar: pseudocódigo de la estrategia elegida. -->
+    <section id="zona-exportar" class="zona" hidden>
+      <div class="tarjeta">
+        <h2>Exportar</h2>
+        <p id="exportar-vacio" class="aviso-proximamente">Elige primero una estrategia en el ranking del Laboratorio y vuelve aquí para exportarla.</p>
+        <div id="exportar-contenido" hidden>
+          <h3 id="exp-nombre">—</h3>
+          <pre id="exp-pseudocodigo" class="pseudocodigo"></pre>
+          <div class="fila-botones">
+            <button id="boton-descargar">Descargar .txt</button>
+            <button id="boton-copiar">Copiar al portapapeles</button>
+          </div>
+          <p class="nota-grafica">El pseudocódigo describe las reglas en texto plano, con los valores actuales de sus parámetros. Úsalo como punto de partida para adaptarlo a tu plataforma de trading.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- type="module" carga app.js después del HTML y permite usar import/export. -->
+  <script type="module" src="app.js"></script>
+</body>
+
+</html>

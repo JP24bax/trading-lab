@@ -1,0 +1,11 @@
+# Archivos del sistema
+.DS_Store
+Thumbs.db
+
+# Dependencias y configuración local
+node_modules/
+.vercel/
+
+# Secretos: nunca se suben
+.env
+.env.*
