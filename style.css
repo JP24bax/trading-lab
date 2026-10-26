@@ -227,3 +227,120 @@ tbody tr.seleccionada { outline: 1px solid var(--accent); }
 }
 
 .fila-botones { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0 0; }
+
+/* Resultado del webhook (en página, sin alert) */
+.webhook-resultado {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  word-break: break-word;
+}
+.webhook-resultado.exito { border-color: var(--verde); }
+.webhook-resultado.error { border-color: var(--rojo); }
+/* Historial de señales enviadas */
+.historial-senales {
+  margin-top: 16px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.historial-cabecera {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.historial-cabecera h3 { margin: 0; font-size: 0.95rem; }
+.boton-mini {
+  padding: 4px 10px;
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+.historial-tabla {
+  width: 100%;
+  font-size: 0.8rem;
+  border-collapse: collapse;
+}
+.historial-tabla th, .historial-tabla td {
+  padding: 4px 6px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+.historial-tabla th { color: var(--muted); font-weight: 500; }
+.historial-tabla td { font-family: var(--mono); }
+.historial-tabla .num { text-align: right; }
+/* ── Motor Bot: KPIs, badges, tabla y log ─────────────────────── */
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 10px;
+  margin: 14px 0;
+}
+.kpi-valor.positivo { color: var(--verde); }
+.kpi-valor.negativo { color: var(--rojo); }
+.kpi-valor.warn { color: #f59e0b; }
+
+.badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  vertical-align: middle;
+}
+.badge-verde { background: #12321f; color: var(--verde); }
+.badge-rojo { background: #3a1c; color: var(--rojo); }
+.badge-amarillo { background: #3a2f14; color: #f59e0b; }
+.badge-azul { background: #14283a; color: var(--accent); }
+
+button.boton-rojo { background: var(--rojo); color: #fff; }
+
+.motor-log {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  line-height: 1.6;
+  max-height: 260px;
+  overflow-y: auto;
+  color: var(--text);
+}
+
+#tabla-trades tbody tr { cursor: pointer; }
+.modal-trade {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  max-width: 580px;
+  width: 92%;
+}
+.modal-trade::backdrop { background: rgba(4, 8, 16, 0.6); }
+#modal-snapshot { width: 100%; height: 160px; background: #0a1020; border: 1px solid var(--border); border-radius: 10px; }
+/* ── Backtest: veredicto con semáforo ──────────────────────────── */
+.bt-veredicto {
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+.bt-veredicto.exito { color: var(--verde); }
+.bt-veredicto.error { color: var(--rojo); }
+.bt-veredicto.warn { color: #f59e0b; }
+#bt-curva { width: 100%; height: 220px; border: 1px solid var(--border); border-radius: 10px; background: #0a1020; }
+/* ── Reglas: catálogo consultable ──────────────────────────────── */
+.regla-catalogo {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  max-height: 260px;
+  overflow-y: auto;
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+.regla-item strong { color: var(--accent); font-family: var(--mono); font-size: 0.8rem; }
+.regla-item span { color: var(--muted); }

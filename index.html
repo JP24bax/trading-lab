@@ -28,17 +28,27 @@
       <button class="pestana" data-zona="probador">Probador</button>
       <button class="pestana" data-zona="optimizador">Optimizador</button>
       <button class="pestana" data-zona="exportar">Exportar</button>
+      <button class="pestana" data-zona="motor">Motor Bot</button>
+      <button class="pestana" data-zona="bt">Backtest</button>
+      <button class="pestana" data-zona="cfg">Configuración</button>
+      <button class="pestana" data-zona="reglas">Reglas</button>
     </nav>
   </header>
 
   <main id="app">
-    <!-- Zona Laboratorio: generador (próximamente) + ranking. -->
+    <!-- Zona Laboratorio: generador masivo binario + ranking por Win Rate. -->
     <section id="zona-laboratorio" class="zona">
       <div class="tarjeta" id="tarjeta-generador">
-        <h2>Generador de estrategias</h2>
-        <p class="aviso-proximamente">Crea un lote de <strong id="num-lote">10</strong> estrategias con reglas al azar.
-          Cada una se somete a un mini backtest para darla una puntuación.</p>
-        <button id="boton-generar">Generar lote</button>
+        <h2>Generador masivo de estrategias (IQ Option)</h2>
+        <p class="aviso-proximamente">Crea un lote de <strong id="num-lote">10</strong> estrategias binarias
+          (RSI, EMA, SMA, Bollinger, MACD, Stochastic) y descarta automáticamente las que no superan el
+          <strong>58%</strong> de Win Rate.</p>
+        <div class="fila-botones">
+          <button id="boton-generar">Generar lote</button>
+          <button id="boton-generar-masivo">Generar 500 (búsqueda masiva)</button>
+        </div>
+        <p class="nota-grafica" id="estado-generador">Se generan candidatas aleatorias y solo pasan al ranking las que superan el filtro
+          de Win Rate sobre el histórico de velas simuladas.</p>
       </div>
 
       <div class="tarjeta">
@@ -50,10 +60,10 @@
             <tr>
               <th>#</th>
               <th>Estrategia</th>
-              <th class="num" data-orden="puntuacion">Puntuación</th>
+              <th class="num" data-orden="acierto">Win Rate</th>
               <th class="num" data-orden="beneficio">Beneficio</th>
-              <th class="num" data-orden="drawdown">Drawdown</th>
-              <th class="num" data-orden="acierto">% acierto</th>
+              <th class="num" data-orden="operaciones">Ops</th>
+              <th class="num" data-orden="expiracion">Exp</th>
             </tr>
           </thead>
           <tbody id="cuerpo-ranking"></tbody>
@@ -75,11 +85,10 @@
               <p class="regla"><strong>Sale:</strong> <span id="prob-salida">—</span></p>
             </div>
             <div class="probador-botones">
-              <label class="campo-capital">Capital inicial:
-                <input id="campo-capital" type="number" min="100" step="100" value="10000">
+              <label class="campo-capital">Capital:
+                <input id="campo-capital" type="number" min="100" step="100" value="1000">
               </label>
               <button id="boton-reprobar">Volver a probar</button>
-              <button id="boton-optimizar">Optimizar</button>
             </div>
           </div>
           <div class="cuadros">
@@ -87,15 +96,20 @@
                 id="prob-beneficio">—</span></div>
             <div class="cuadro"><span class="cuadro-etiqueta">Drawdown máx.</span><span class="cuadro-valor"
                 id="prob-drawdown">—</span></div>
-            <div class="cuadro"><span class="cuadro-etiqueta">% acierto</span><span class="cuadro-valor"
+            <div class="cuadro"><span class="cuadro-etiqueta">Win Rate</span><span class="cuadro-valor"
                 id="prob-acierto">—</span></div>
             <div class="cuadro"><span class="cuadro-etiqueta">Operaciones</span><span class="cuadro-valor"
                 id="prob-operaciones">—</span></div>
           </div>
           <svg id="grafica-capital" viewBox="0 0 600 220" preserveAspectRatio="none" role="img"
             aria-label="Curva de capital del backtest"></svg>
-          <p class="nota-grafica">Curva de capital sobre 400 velas de mercado simuladas. Línea base = capital inicial.
-          </p>
+          <div class="cuadro" style="margin-top: 12px;">
+            <span class="cuadro-etiqueta">Validación out-of-sample (tercio final del histórico)</span>
+            <span class="cuadro-valor" id="prob-oos">—</span>
+          </div>
+          <p class="nota-grafica">Backtest binario: ganancia = monto × 82% · pérdida = monto · resultado al cierre
+            exacto de la vela de expiración. 1200 velas simuladas; la primera fase entrena el filtro y la final
+            valida la robustez.</p>
         </div>
       </div>
     </section>
@@ -132,22 +146,358 @@
       </div>
     </section>
 
-    <!-- Zona Exportar: pseudocódigo de la estrategia elegida. -->
+    <!-- Zona Exportar: JSON evaluable, Bot Python y Webhook en vivo. -->
     <section id="zona-exportar" class="zona" hidden>
       <div class="tarjeta">
         <h2>Exportar</h2>
         <p id="exportar-vacio" class="aviso-proximamente">Elige primero una estrategia en el ranking del Laboratorio y vuelve aquí para exportarla.</p>
         <div id="exportar-contenido" hidden>
           <h3 id="exp-nombre">—</h3>
-          <pre id="exp-pseudocodigo" class="pseudocodigo"></pre>
+          <pre id="exp-codigo" class="pseudocodigo"></pre>
           <div class="fila-botones">
-            <button id="boton-descargar">Descargar .txt</button>
-            <button id="boton-copiar">Copiar al portapapeles</button>
+            <button id="boton-descargar-json">Descargar JSON</button>
+            <button id="boton-descargar-python">Exportar Bot Python</button>
+            <button id="boton-copiar-json">Copiar JSON</button>
           </div>
-          <p class="nota-grafica">El pseudocódigo describe las reglas en texto plano, con los valores actuales de sus parámetros. Úsalo como punto de partida para adaptarlo a tu plataforma de trading.</p>
+          <p class="nota-grafica">El JSON es la fuente de verdad de la estrategia (evaluable por cualquier motor).
+            El Bot Python la compila en un script autónomo con pandas_ta + iqoptionapi listo para ejecutar.</p>
+        </div>
+      </div>
+
+      <div class="tarjeta">
+        <h2>Webhook dispatcher en vivo</h2>
+        <p class="nota-grafica">Conecta con el middleware Python (TradingLab Bridge) para enviar las señales
+          directamente a IQ Option. El backend valida el token, comprueba el payout mínimo y ejecuta la orden.</p>
+        <div class="fila-botones" style="flex-direction: column; align-items: stretch; gap: 10px;">
+          <label class="campo-capital">URL del backend:
+            <input id="webhook-url" type="url" placeholder="http://localhost:8000/api/v1/trade-signal"
+              style="flex: 1; min-width: 240px;">
+          </label>
+          <label class="campo-capital">Token secreto:
+            <input id="webhook-token" type="password" placeholder="MI_TOKEN_SEGURO_123">
+          </label>
+          <div class="fila-botones">
+            <button id="boton-webhook-guardar">Guardar configuración</button>
+            <button id="boton-webhook-probar">Enviar señal de prueba (CALL)</button>
+          </div>
+          <div id="webhook-resultado" class="webhook-resultado" hidden></div>
+          <div id="historial-senales" class="historial-senales" hidden>
+            <div class="historial-cabecera">
+              <h3>Historial de señales</h3>
+              <button id="boton-borrar-historial" class="boton-mini">Borrar</button>
+            </div>
+            <table class="historial-tabla">
+              <thead>
+                <tr><th>Hora</th><th>Par</th><th>Acción</th><th>Monto</th><th>Exp</th><th>Estado</th></tr>
+              </thead>
+              <tbody id="historial-cuerpo"></tbody>
+            </table>
+          </div>
         </div>
       </div>
     </section>
+
+    <!-- Zona Motor Bot: dashboard en vivo del bot de escritorio migrado. -->
+    <section id="zona-motor" class="zona" hidden>
+      <div class="tarjeta">
+        <div class="probador-cabecera">
+          <div>
+            <h2>Motor de Trading <span id="motor-badge" class="badge badge-rojo">● DESCONECTADO</span></h2>
+            <p class="regla">Conectado al TradingLab Engine (Python) por WebSocket. Mismos KPIs, riesgos y
+              estrategias que el bot de escritorio.</p>
+          </div>
+          <div class="probador-botones">
+            <button id="boton-iniciar">▶ Iniciar Bot</button>
+            <button id="boton-parar-now" class="boton-rojo">■ Detener ahora</button>
+            <button id="boton-parar-soft">⏸ Detener al cerrar ops</button>
+          </div>
+        </div>
+        <div class="kpis">
+          <div class="cuadro"><span class="cuadro-etiqueta">Saldo</span><span class="cuadro-valor" id="kpi-balance">—</span></div>
+          <div class="cuadro"><span class="cuadro-etiqueta">Resultado</span><span class="cuadro-valor" id="kpi-pnl">—</span></div>
+          <div class="cuadro"><span class="cuadro-etiqueta">Operaciones</span><span class="cuadro-valor" id="kpi-trades">—</span></div>
+          <div class="cuadro"><span class="cuadro-etiqueta">Win Rate</span><span class="cuadro-valor" id="kpi-wr">—</span></div>
+          <div class="cuadro"><span class="cuadro-etiqueta">Expectativa/op</span><span class="cuadro-valor" id="kpi-ev">—</span></div>
+          <div class="cuadro"><span class="cuadro-etiqueta">Máx. Drawdown</span><span class="cuadro-valor" id="kpi-dd">—</span></div>
+          <div class="cuadro"><span class="cuadro-etiqueta">Mejor racha</span><span class="cuadro-valor" id="kpi-best">—</span></div>
+          <div class="cuadro"><span class="cuadro-etiqueta">Peor racha</span><span class="cuadro-valor" id="kpi-worst">—</span></div>
+        </div>
+        <svg id="grafica-equity" viewBox="0 0 600 220" preserveAspectRatio="none" role="img"
+          aria-label="Curva de equity del bot"></svg>
+        <p class="nota-grafica">Curva de equity: saldo acumulado operación a operación.</p>
+      </div>
+
+      <div class="tarjeta">
+        <h2>Operaciones</h2>
+        <div class="fila-botones" style="margin-bottom: 10px;">
+          <label class="campo-capital">Activo:
+            <select id="filtro-activo"><option>Todos</option></select>
+          </label>
+          <label class="campo-capital">Buscar:
+            <input id="filtro-texto" type="search" placeholder="activo o estrategia...">
+          </label>
+          <button id="boton-exportar-csv">Exportar CSV</button>
+        </div>
+        <p class="vacio" id="trades-vacio">Sin operaciones todavía: inicia el bot en modo Simulación para verlas aquí.</p>
+        <table id="tabla-trades" hidden>
+          <thead>
+            <tr>
+              <th data-orden="timestamp">Hora</th>
+              <th data-orden="asset">Activo</th>
+              <th data-orden="direction">Dirección</th>
+              <th data-orden="strategy">Estrategia</th>
+              <th data-orden="won">Resultado</th>
+              <th class="num" data-orden="profit">Ganancia</th>
+              <th>IA</th>
+            </tr>
+          </thead>
+          <tbody id="cuerpo-trades"></tbody>
+        </table>
+        <p class="nota-grafica">Doble clic o un clic en la fila abre la inspección técnica con el snapshot de velas.</p>
+      </div>
+
+      <div class="tarjeta">
+        <h2>Registro del motor</h2>
+        <div id="motor-log" class="motor-log"></div>
+      </div>
+    </section>
+
+    <!-- Zona Backtest: búsqueda masiva + prueba individual (motor Python). -->
+    <section id="zona-bt" class="zona" hidden>
+      <div class="tarjeta">
+        <h2>Backtest con histórico (motor Python)</h2>
+        <p class="regla">Ejecuta las 92 estrategias cuantitativas del bot sobre el histórico del activo,
+          simulando spread, slippage y rechazo de órdenes. La búsqueda parte el histórico en
+          entrenamiento (50%), validación (25%) y prueba (25% final, datos no usados para elegir).</p>
+        <div class="fila-botones" style="flex-wrap: wrap; gap: 10px;">
+          <label class="campo-capital">Activo:
+            <input id="bt-activo" type="text" value="EURUSD" style="width: 110px;">
+          </label>
+          <label class="campo-capital">Velas:
+            <input id="bt-historico" type="number" value="5000" min="200" step="100" style="width: 100px;">
+          </label>
+          <label class="campo-capital">Expiración (min):
+            <input id="bt-expiracion" type="number" value="1" min="1" max="15" style="width: 70px;">
+          </label>
+          <button id="bt-buscar">🔍 Buscar la mejor (92 estrategias)</button>
+        </div>
+        <p class="nota-grafica" id="bt-estado">Elige un activo y lanza la búsqueda, o prueba una estrategia concreta abajo.</p>
+      </div>
+
+      <div class="tarjeta">
+        <h2>Resultado</h2>
+        <p class="regla" id="bt-elegida" hidden></p>
+        <div class="cuadros" style="margin-top: 10px;">
+          <div class="cuadro" style="grid-column: 1 / -1;">
+            <span class="cuadro-etiqueta">Veredicto (datos de prueba)</span>
+            <span class="cuadro-valor" id="bt-veredicto" hidden>—</span>
+          </div>
+          <div class="cuadro" style="grid-column: 1 / -1;">
+            <span class="cuadro-etiqueta">Métricas</span>
+            <span class="cuadro-valor" id="bt-metricas" hidden>—</span>
+          </div>
+        </div>
+        <svg id="bt-curva" viewBox="0 0 600 220" preserveAspectRatio="none" role="img"
+          aria-label="Curva de equity del backtest"></svg>
+        <p class="nota-grafica">Resultado acumulado en el tramo de prueba (en unidades de apuesta).</p>
+      </div>
+
+      <div class="tarjeta">
+        <h2>Probar una estrategia concreta</h2>
+        <div class="fila-botones" style="flex-wrap: wrap; gap: 10px;">
+          <label class="campo-capital" style="flex: 1; min-width: 280px;">Estrategia:
+            <select id="bt-estrategia" style="flex: 1;"></select>
+          </label>
+          <button id="bt-probar">📊 Probar con histórico</button>
+        </div>
+      </div>
+
+      <div class="tarjeta">
+        <h2>Top 10 de la búsqueda</h2>
+        <p class="vacio" id="bt-top-vacio">Aún no hay búsqueda: las 10 mejores aparecen aquí tras lanzarla.</p>
+        <table id="bt-top-tabla" hidden>
+          <thead>
+            <tr>
+              <th>Estrategia</th>
+              <th class="num">Ops entrenamiento</th>
+              <th class="num">WR entrenamiento</th>
+              <th class="num">Ops validación</th>
+              <th class="num">WR validación</th>
+            </tr>
+          </thead>
+          <tbody id="bt-top-cuerpo"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Zona Config: conexión, riesgos, horario y filtro IA. -->
+    <section id="zona-cfg" class="zona" hidden>
+      <div class="tarjeta">
+        <h2>Conexión y operación</h2>
+        <div class="fila-botones" style="flex-wrap: wrap; gap: 10px;">
+          <label class="campo-capital" style="flex: 1; min-width: 300px;">URL del motor (TradingLab Engine):
+            <input id="cfg-engine-url" type="url" placeholder="http://localhost:8100 o https://mi-motor.up.railway.app" style="flex: 1;">
+          </label>
+        </div>
+        <p class="nota-grafica">En local déjalo en http://localhost:8100. Para usar la web publicada en Vercel,
+          despliega el motor (ver bot-desktop/DESPLEGAR.md) y pon aquí su URL pública.</p>
+        <div class="fila-botones" style="flex-wrap: wrap; gap: 10px;">
+          <label class="campo-capital">Modo:
+            <select id="cfg-modo">
+              <option value="sim">Simulación (sin conexión)</option>
+              <option value="iq">IQ Option (demo/PRACTICE)</option>
+            </select>
+          </label>
+          <label class="campo-capital">Activo(s):
+            <input id="cfg-activos" type="text" placeholder="EURUSD, GBPUSD, EURUSD-OTC" style="width: 260px;">
+          </label>
+          <label class="campo-capital">Importe (COP):
+            <input id="cfg-amount" type="number" min="1000" step="1000" style="width: 120px;">
+          </label>
+          <label class="campo-capital">Expiración (min):
+            <input id="cfg-expiry" type="number" min="1" max="15" style="width: 70px;">
+          </label>
+        </div>
+        <div class="fila-botones" id="cfg-login" style="flex-wrap: wrap; gap: 10px;" hidden>
+          <label class="campo-capital">Correo IQ Option:
+            <input id="cfg-email" type="email" autocomplete="username" style="width: 240px;">
+          </label>
+          <label class="campo-capital">Contraseña:
+            <input id="cfg-password" type="password" autocomplete="current-password" style="width: 180px;">
+          </label>
+        </div>
+        <p class="nota-grafica" id="cfg-aviso-sim">Modo simulación: el motor usa datos sintéticos y no toca tu cuenta.
+          Cambia a "IQ Option" para operar en la cuenta demo PRACTICE (nunca REAL).</p>
+        <div class="fila-botones" style="flex-wrap: wrap; gap: 10px; margin-top: 8px;">
+          <label class="campo-capital" style="flex: 1; min-width: 280px;">Estrategia:
+            <select id="cfg-strategy" style="flex: 1;">
+              <option value="auto">Automática (el motor elige la mejor del backtest)</option>
+              <option value="rsi14_30_70">RSI(14) 30/70</option>
+              <option value="ema9_21">Cruce EMA 9/21</option>
+              <option value="stoch14_20_80">Estocástico 14 (20/80)</option>
+            </select>
+          </label>
+        </div>
+      </div>
+
+      <div class="tarjeta">
+        <h2>Gestión de riesgo</h2>
+        <div class="fila-botones" style="flex-wrap: wrap; gap: 10px;">
+          <label class="campo-capital">Pérdida máx. sesión (COP):
+            <input id="cfg-max-loss" type="number" min="10000" step="10000" style="width: 130px;">
+          </label>
+          <label class="campo-capital">Racha máx. de pérdidas:
+            <input id="cfg-max-streak" type="number" min="1" max="20" style="width: 70px;">
+          </label>
+          <label class="campo-capital">Ops máximas:
+            <input id="cfg-max-trades" type="number" min="1" max="200" style="width: 70px;">
+          </label>
+          <label class="campo-capital">Horario (0-24 h):
+            <input id="cfg-start-hour" type="number" min="0" max="24" style="width: 60px;">
+            <input id="cfg-end-hour" type="number" min="0" max="24" style="width: 60px;">
+          </label>
+          <label class="campo-capital">Reducir riesgo tras racha (%):
+            <input id="cfg-risk-pct" type="number" min="0" max="90" style="width: 70px;">
+          </label>
+        </div>
+        <p class="nota-grafica">El motor pausa la sesión si alcanza la pérdida máxima, la racha negativa o el
+          número de operaciones. Tras 2 pérdidas seguidas reduce el importe el % indicado.</p>
+      </div>
+
+      <div class="tarjeta">
+        <h2>Filtro de IA (veto de riesgo)</h2>
+        <p class="nota-grafica">La IA no decide sola: solo puede vetar señales ya generadas por la estrategia
+          validada. Si falla o no hay clave, no veta (el bot sigue sin filtro).</p>
+        <div class="fila-botones" style="flex-wrap: wrap; gap: 10px;">
+          <label class="campo-capital">Proveedor:
+            <select id="cfg-ai">
+              <option value="none">Sin IA</option>
+              <option value="groq">Groq (Llama, gratis)</option>
+              <option value="gemini">Google Gemini (AI Studio)</option>
+            </select>
+          </label>
+          <label class="campo-capital" id="cfg-ai-key-row" hidden>Clave API:
+            <input id="cfg-ai-key" type="password" placeholder="gsk_... o AIza..." style="width: 260px;">
+          </label>
+          <button id="btn-cfg-probar-ia">Probar conexión IA</button>
+        </div>
+        <details style="margin-top: 10px;">
+          <summary style="cursor: pointer; color: var(--accent);">¿Cómo decide el filtro? (Transparencia)</summary>
+          <p class="nota-grafica">Antes de cada orden, el motor envía a la IA las últimas 20 velas cerradas
+            [open, high, low, close] y la dirección propuesta. El modelo responde solo {"confirm": true/false,
+            "reason": "..."}. Si confirma, la orden sale; si veta, la operación se salta y se registra el motivo
+            en el log. Con temperatura 0 y JSON estricto: la IA no puede inventar estrategias ni operar por su cuenta.</p>
+        </details>
+      </div>
+
+      <div class="tarjeta">
+        <div class="fila-botones" style="flex-wrap: wrap; gap: 10px;">
+          <button id="btn-cfg-iniciar" style="background: #16a34a;">▶ Guardar e iniciar el bot</button>
+          <button id="btn-cfg-guardar">💾 Solo guardar configuración</button>
+        </div>
+        <div id="cfg-resultado" class="webhook-resultado" hidden></div>
+      </div>
+    </section>
+
+    <!-- Zona Reglas: editor visual de estrategias dinámicas (motor Python). -->
+    <section id="zona-reglas" class="zona" hidden>
+      <div class="tarjeta">
+        <h2>Editor visual de reglas</h2>
+        <p class="regla">Crea estrategias nuevas con una condición simple (regla dinámica registrada en el
+          motor Python en vivo, sin reiniciar). Después podrás probarla en la pestaña Backtest.</p>
+        <div class="fila-botones" style="flex-wrap: wrap; gap: 10px;">
+          <label class="campo-capital">Nombre:
+            <input id="regla-nombre" type="text" placeholder="mi_rsi30" style="width: 140px;">
+          </label>
+          <label class="campo-capital">Indicador:
+            <select id="regla-indicador">
+              <option value="RSI">RSI(14)</option>
+              <option value="EMA_Fast">EMA rápida (9)</option>
+              <option value="Precio">Precio de cierre</option>
+            </select>
+          </label>
+          <label class="campo-capital">Condición:
+            <select id="regla-condicion">
+              <option value="&lt;">menor que</option>
+              <option value="&gt;">mayor que</option>
+              <option value="cruce">cruce</option>
+            </select>
+          </label>
+          <label class="campo-capital">Valor límite:
+            <input id="regla-valor" type="number" step="0.0001" placeholder="30" style="width: 100px;">
+          </label>
+        </div>
+        <div class="fila-botones" style="margin-top: 10px;">
+          <button id="btn-regla-crear">✚ Registrar regla en el motor</button>
+          <input id="regla-buscar" type="search" placeholder="buscar en catálogo..." style="width: 200px;">
+          <button id="btn-regla-listar">Ver catálogo</button>
+        </div>
+        <div id="regla-resultado" class="webhook-resultado" hidden></div>
+        <div id="regla-catalogo" class="regla-catalogo" hidden></div>
+      </div>
+
+      <div class="tarjeta">
+        <h2>¿Qué hace cada condición?</h2>
+        <p class="nota-grafica">
+          <strong>menor que / mayor que</strong>: señal cuando el indicador cruza el umbral (RSI menor que 30 =
+          sobreventa → CALL; el lado contrario sale como PUT espejo).<br>
+          <strong>cruce</strong>: señal solo en la vela en que el indicador atraviesa el umbral, no mientras
+          esté al otro lado.<br>
+          Con <strong>Precio</strong> el umbral se compara contra el cierre (útil para rupturas de nivel); con
+          <strong>EMA rápida</strong> se compara el cierre contra su media exponencial de 9 períodos.<br>
+          Las reglas se registran en el motor en caliente y sobreviven mientras el servicio no se reinicie.
+        </p>
+      </div>
+    </section>
+
+    <!-- Modal de inspección técnica de una operación. -->
+    <dialog id="modal-trade" class="modal-trade">
+      <h3 id="modal-titulo">—</h3>
+      <p class="regla" id="modal-info">—</p>
+      <svg id="modal-snapshot" viewBox="0 0 520 160" preserveAspectRatio="none"></svg>
+      <p class="nota-grafica">Snapshot de las últimas 15 velas antes de la entrada.</p>
+      <div class="fila-botones"><button id="modal-cerrar">Cerrar</button></div>
+    </dialog>
   </main>
 
   <!-- type="module" carga app.js después del HTML y permite usar import/export. -->
