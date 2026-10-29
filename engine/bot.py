@@ -161,15 +161,35 @@ def cmd_test_order(a):
     ON_EVENT("balance", value=bal1 * k)
 
 
+def _ranking_estrategias(b, a):
+    """Lista de estrategias a usar. Con 'auto' toma el top del backtest; si falla, rsi14_30_70."""
+    if a.strategy != "auto":
+        return [a.strategy]
+    try:
+        asset0 = a.assets[0]
+        df_h = b.candles_history(asset0, 60, a.history)
+        _, top, _ = search(df_h, expiry_candles=a.expiry, payout=b.get_payout(asset0))
+        ranking = [s for s in top["strategy"] if s in STRATEGIES]
+        if ranking:
+            ON_EVENT("log", text=f"📊 Estrategias candidatas (auto): {', '.join(ranking[:5])}")
+            return ranking
+    except Exception as e:
+        ON_EVENT("log", text=f"⚠ No se pudo calcular el ranking automático ({e}); se usa rsi14_30_70")
+    return ["rsi14_30_70"]
+
+
 def cmd_run(a):
     b = broker_from_args(a)
     k, cur, amount_acct = money_setup(b, a)
-    
+
     start_bal = b.get_balance()
     prev = load_session_state()
     trades_list = list(prev.get("trades", [])) if prev else []   # historial acumulado entre sesiones
     trades = wins = loss_streak = 0                                # contadores de ESTA sesión
     last_t = {}
+
+    ranking = _ranking_estrategias(b, a)
+    idx_estrategia = 0
 
     ON_EVENT("balance", value=start_bal * k)
     ON_EVENT("log", text=f"✔ Conexión exitosa. Saldo disponible: {moneda.fmt(start_bal * k)}")
@@ -202,9 +222,9 @@ def cmd_run(a):
                     if last_t.get(asset) == t: continue
                     last_t[asset] = t
 
-                strat_name = a.strategy if a.strategy != "auto" else "rsi14_30_70"
+                strat_name = ranking[idx_estrategia]
                 sig = int(STRATEGIES[strat_name](df).iloc[-1])
-                
+
                 ON_EVENT("log", text=f"🔍 Escaneando {asset} con estrategia {strat_name}... (Señal: {sig})")
 
                 if sig == 0: continue
@@ -260,6 +280,11 @@ def cmd_run(a):
                 save_session_state(a, trades_list)
                 ON_EVENT("trade", **trade_data)
                 ON_EVENT("badge_status", state="WAITING", text="Analizando Mercado")
+
+                # Rotación (solo en modo auto): se evalúa UNA vez por operación, tras cada pérdida par seguida.
+                if a.strategy == "auto" and len(ranking) > 1 and loss_streak >= 2 and loss_streak % 2 == 0:
+                    idx_estrategia = (idx_estrategia + 1) % len(ranking)
+                    ON_EVENT("log", text=f"🔄 Cambio de estrategia a {ranking[idx_estrategia]}")
 
                 if pnl <= -a.max_loss or loss_streak >= a.max_streak or trades >= a.max_trades:
                     ON_EVENT("log", text="🛑 Límite de sesión o pérdidas alcanzado.")
