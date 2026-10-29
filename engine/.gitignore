@@ -1,8 +1,20 @@
+# Archivos del sistema
+.DS_Store
+Thumbs.db
+
+# Dependencias y configuración local
+node_modules/
+.vercel/
 __pycache__/
+*.pyc
+
+# Secretos: nunca se suben
+.env
+.env.*
+ai_keys.json
+login.txt
+
+# Estado del motor (datos de trading y cachés)
 session_state.json
 cop_cache.json
 logs/
-*.pyc
-.env
-ai_keys.json
-login.txt

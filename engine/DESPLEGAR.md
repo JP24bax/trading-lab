@@ -1,7 +1,12 @@
 # TradingLab Engine — motor Python desplegado (Railway / Render / VPS)
 
 ## Qué es esta carpeta
-(Esta carpeta es una copia de `bot-desktop/`; la fuente de verdad está allí.)
+Copia del motor que vive en `bot-desktop/` (fuente de verdad de desarrollo).
+Viaja en el monorepo para que Railway lo despliegue con Root Directory = `engine`.
+
+---
+
+## Despliegue original
 Envoltorio FastAPI alrededor de tu bot original (`bot.py`, `engine.py`, etc.).
 No modifica la lógica: la expone por HTTP/WebSocket para que la web de TradingLab
 (publicada en Vercel) la use desde cualquier sitio.
@@ -9,7 +14,7 @@ No modifica la lógica: la expone por HTTP/WebSocket para que la web de TradingL
 ## Despliegue en Railway (recomendado, gratis con límites)
 1. Sube `bot-desktop/` a un repo de GitHub (puede ser el mismo del clon, en esta carpeta).
 2. En [railway.app](https://railway.app) → New Project → Deploy from GitHub repo.
-3. **Root Directory**: `engine` (subcarpeta del monorepo trading-lab)
+3. **Root Directory**: `engine` (subcarpeta del monorepo)
 4. Railway detecta Python: si no, usa "Custom start command":
    `pip install -r requirements.txt && pip install git+https://github.com/Lu-Yi-Hsun/iqoptionapi.git && uvicorn web_service:app --host 0.0.0.0 --port $PORT`
 5. Variables de entorno (en Railway → Variables):
