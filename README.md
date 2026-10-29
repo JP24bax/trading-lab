@@ -32,3 +32,10 @@ Es una web estática (HTML, CSS y JavaScript): se publica en Vercel importando e
 - Las estrategias no evolucionan por generación (algoritmo genético): se generan de forma independiente y el optimizador se encarga de refinarlas.
 - Todo el estado vive en `localStorage` (clave `tradinglab.v1`), así que las estrategias sobreviven a recargar la página sin backend.
 - La puntuación combinada pondera el beneficio relativo, castiga el drawdown y premia el porcentaje de aciertos.
+
+## Motor Python (`engine/`)
+
+La lógica completa del bot de escritorio (estrategias, backtesting con fricciones,
+filtro IA, broker IQ Option) vive como servicio FastAPI en `engine/`. Se despliega
+por separado (Railway/Render) y la web se conecta a él desde la pestaña
+Configuración → "URL del motor". Instrucciones en [`engine/DESPLEGAR.md`](engine/DESPLEGAR.md).

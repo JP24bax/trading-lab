@@ -1,0 +1,9 @@
+# TradingLab Engine - dependencias del motor desplegado.
+# Nota: iqoptionapi se instala desde GitHub (PyPI desactualizado):
+#   pip install git+https://github.com/Lu-Yi-Hsun/iqoptionapi.git
+fastapi>=0.110
+uvicorn[standard]>=0.29      # standard incluye websockets y uvloop
+pydantic>=2.6
+numpy>=1.26
+pandas>=2.2
+requests>=2.31

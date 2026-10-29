@@ -1,0 +1,8 @@
+__pycache__/
+session_state.json
+cop_cache.json
+logs/
+*.pyc
+.env
+ai_keys.json
+login.txt
