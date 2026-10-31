@@ -1,6 +1,6 @@
-// backtest-ui.js — Pestaña "Backtest": las 92 estrategias del motor sobre histórico.
-// Consume /backtest/search (búsqueda masiva con train/validation/test) y
-// /backtest/single (una estrategia en el tramo de prueba 25% final).
+// backtest-ui.js — Pestaña "Backtest": las 92 estrategias del motor, evaluadas con walk-forward.
+// Consume /backtest/search (elige en una ventana, opera la siguiente, p-valores ajustados) y
+// /backtest/single (una estrategia sobre todo el histórico, p ajustado por 92 comparaciones).
 import { backtestBusqueda, backtestSingle, listarEstrategias } from "./motor.js";
 
 const $ = (id) => document.getElementById(id);
@@ -35,48 +35,133 @@ export function pintarSerie(svg, serie, color) {
   );
 }
 
+// ─ Parámetros comunes (datos, filtros) ─────────────
+function params() {
+  return {
+    asset: $("bt-activo").value.trim().toUpperCase() || "EURUSD",
+    history: Math.max(600, Number($("bt-historico").value) || 10000),
+    expiry: Number($("bt-expiracion").value) || 1,
+    sim: $("bt-fuente").value === "sim",
+    filtro_volatilidad: $("bt-f-vol").checked,
+    filtro_tendencia: $("bt-f-tend").checked,
+    ...credenciales(),
+  };
+}
+
+// Credenciales: las que se guardaron en la pestaña Config (si no hay, el motor usa sus variables de entorno).
+function credenciales() {
+  try {
+    const c = JSON.parse(localStorage.getItem("tradinglab.motor.cfg") || "null") || {};
+    return c.email && c.password ? { email: c.email, password: c.password } : {};
+  } catch { return {}; }
+}
+
+function pintarAviso(datos) {
+  const el = $("bt-aviso-datos");
+  if (!el) return;
+  el.hidden = !datos;
+  if (!datos) return;
+  el.textContent = (datos.sintetico ? "⚠ " : "ℹ ") + datos.aviso;
+  el.className = "aviso-datos" + (datos.sintetico ? " sint" : "");
+}
+
+function explicarError(e) {
+  const m = String(e.message || e);
+  return /login|correo|contraseña/i.test(m)
+    ? `${m}. Guarda tu correo y contraseña de IQ Option en la pestaña Config, o define IQ_EMAIL e IQ_PASSWORD en el motor.`
+    : m;
+}
+
 // ─ Métricas resumidas ─────────────
 function pintarMetricas(res, payout, extra = "") {
   const el = $("bt-metricas");
   if (!el) return;
-  const wr = (res.winrate * 100).toLocaleString("es-CO", { maximumFractionDigits: 1 });
-  const be = (payout / (1 + payout) * 100).toLocaleString("es-CO", { maximumFractionDigits: 1 });
+  const pct = (v, d = 1) => (v * 100).toLocaleString("es-CO", { maximumFractionDigits: d });
+  const equilibrio = 1 / (1 + payout);
   el.hidden = false;
   el.textContent =
-    `Operaciones: ${res.n ?? 0} · Win Rate: ${wr}% (equilibrio ${be}% con payout ${Math.round(payout * 100)}%) · ` +
+    `Operaciones: ${res.n ?? 0} (empates ${res.ties ?? 0}) · Win rate: ${pct(res.winrate ?? 0)}% ` +
+    `(equilibrio ${pct(equilibrio)}% con payout ${pct(payout, 0)}%) · p=${(res.p ?? 1).toFixed(3)} · ` +
     `Profit Factor: ${(res.profit_factor ?? 0).toFixed(2)} · Racha máx. negativa: ${res.max_loss_streak ?? 0}` +
     (extra ? ` · ${extra}` : "");
 }
 
-// ─ Búsqueda masiva ────────────
+const colorNivel = (n) => (n === "bad" ? "var(--rojo)" : n === "good" ? "var(--verde)" : "#f59e0b");
+
+// ─ Búsqueda masiva (walk-forward) ────────────
 async function busquedaMasiva() {
-  const activo = $("bt-activo").value.trim().toUpperCase() || "EURUSD";
-  const historico = Number($("bt-historico").value) || 5000;
-  const expiracion = Number($("bt-expiracion").value) || 1;
+  const p = params();
   const boton = $("bt-buscar");
   boton.disabled = true;
-  $("bt-estado").textContent = `⏳ Descargando ${historico} velas y evaluando las 92 estrategias...`;
+  $("bt-estado").textContent = `⏳ ${p.sim ? "Generando" : "Descargando"} ${p.history} velas de ${p.asset} y evaluando las 92 estrategias en ventanas...`;
   try {
-    const r = await backtestBusqueda({ asset: activo, sim: true, history: historico, expiry: expiracion });
+    const r = await backtestBusqueda(p);
+    pintarAviso(r.datos);
     pintarVeredicto(r.veredicto);
-    pintarMetricas(r.test, r.payout, `evaluadas ${r.tested} estrategias sobre ${r.velas} velas`);
-    $("bt-elegida").textContent = `Estrategia elegida: ${r.elegida} — ${r.descripcion || ""}`;
-    pintarSerie($("bt-curva"), (r.equity_curve || []).length ? r.equity_curve : r.test.equity_curve,
-      r.veredicto.nivel === "bad" ? "var(--rojo)" : r.veredicto.nivel === "good" ? "var(--verde)" : "#f59e0b");
+    const w = r.walk || {};
+    pintarMetricas(r.test, r.payout,
+      `ventanas operadas ${w.ventanas_operadas ?? 0}/${w.ventanas_total ?? 0}, rentables ${w.ventanas_positivas ?? 0}`);
+    const el = $("bt-elegida");
+    el.hidden = false;
+    el.textContent = r.elegida
+      ? `Candidata de hoy: ${r.elegida} — ${r.descripcion || ""} (mejor en las velas más recientes; su rendimiento futuro NO está validado: el veredicto de arriba juzga el método).`
+      : "Ninguna estrategia reunió operaciones suficientes en las velas recientes.";
+    pintarComparacion(r);
+    pintarSerie($("bt-curva"), r.equity_curve || [], colorNivel(r.veredicto.nivel));
+    pintarFolds(w.folds || []);
     pintarTop10(r.top10 || []);
-    $("bt-estado").textContent = `✔ Búsqueda completada: ${r.candidates} candidatas válidas de ${r.tested} probadas.`;
+    $("bt-estado").textContent = `✔ Evaluación completada: ${r.tested} estrategias, ${r.candidates} con muestra suficiente. ` +
+      `Payout usado ${(r.payout * 100).toFixed(0)}% (el del bróker era ${(r.payout_broker * 100).toFixed(0)}%).`;
   } catch (e) {
-    $("bt-estado").textContent = `✖ Error en la búsqueda: ${e.message}`;
+    $("bt-estado").textContent = `✖ Error en la búsqueda: ${explicarError(e)}`;
   } finally {
     boton.disabled = false;
   }
 }
 
-// ─ Top 10 en tabla ──────────
+function pintarComparacion(r) {
+  const el = $("bt-comparacion");
+  if (!el) return;
+  if (!r.sin_filtros || !r.filtros) { el.hidden = true; return; }
+  const f = r.test, s = r.sin_filtros;
+  const pct = (v) => ((v ?? 0) * 100).toFixed(1) + "%";
+  el.hidden = false;
+  el.textContent =
+    `Con filtros: ${f.n} ops, win rate ${pct(f.winrate)}, EV ${(f.ev ?? 0).toFixed(3)}/op · ` +
+    `Sin filtros: ${s.n} ops, win rate ${pct(s.winrate)}, EV ${(s.ev ?? 0).toFixed(3)}/op. ` +
+    `Con tan pocas operaciones una diferencia de 1-3 puntos es ruido; solo cuenta si se repite en datos reales y muestras grandes.`;
+}
+
+// ─ Ventanas del walk-forward ──────────
+function pintarFolds(filas) {
+  const tabla = $("bt-folds-tabla");
+  if (!tabla) return;
+  tabla.hidden = filas.length === 0;
+  $("bt-folds-vacio").hidden = filas.length > 0;
+  const pct = (v) => (v == null ? "—" : (v * 100).toFixed(1) + "%");
+  $("bt-folds-cuerpo").replaceChildren(...filas.map((f) => {
+    const tr = document.createElement("tr");
+    const td = (texto, clase = "") => {
+      const c = document.createElement("td");
+      c.textContent = texto;
+      if (clase) c.className = clase;
+      tr.appendChild(c);
+    };
+    td(String(f.ventana), "num");
+    td(f.estrategia ? (f.opero ? f.estrategia : `${f.estrategia} (no superó el equilibrio: no opera)`) : "sin muestra suficiente");
+    td(pct(f.train_wr), "num");
+    td(String(f.test_n ?? 0), "num");
+    td(f.opero ? pct(f.test_wr) : "—", "num");
+    return tr;
+  }));
+}
+
+// ─ Ranking en tabla ──────────
 function pintarTop10(filas) {
   const tabla = $("bt-top-tabla");
   if (!tabla) return;
   tabla.hidden = filas.length === 0;
+  $("bt-top-vacio").hidden = filas.length > 0;
   const cuerpo = $("bt-top-cuerpo");
   cuerpo.replaceChildren(...filas.map((f) => {
     const tr = document.createElement("tr");
@@ -87,10 +172,12 @@ function pintarTop10(filas) {
       tr.appendChild(c);
     };
     td(f.strategy);
-    td(String(f.tr_n ?? 0), "num");
-    td(((f.tr_wr ?? 0) * 100).toFixed(1) + "%", "num");
-    td(String(f.va_n ?? 0), "num");
-    td(((f.va_wr ?? 0) * 100).toFixed(1) + "%", "num");
+    td(String(f.n ?? 0), "num");
+    td(((f.winrate ?? 0) * 100).toFixed(1) + "%", "num");
+    td((f.z ?? 0).toFixed(2), "num");
+    td((f.p ?? 1).toFixed(3), "num");
+    td((f.p_ajustado ?? 1).toFixed(3), "num");
+    td(`${f.tramos_positivos ?? 0}/${f.tramos ?? 0}`, "num");
     return tr;
   }));
 }
@@ -99,21 +186,21 @@ function pintarTop10(filas) {
 async function probarSeleccionada() {
   const nombre = $("bt-estrategia").value;
   if (!nombre) { $("bt-estado").textContent = "Elige una estrategia del desplegable."; return; }
-  const activo = $("bt-activo").value.trim().toUpperCase() || "EURUSD";
-  const historico = Number($("bt-historico").value) || 5000;
-  const expiracion = Number($("bt-expiracion").value) || 1;
+  const p = params();
   const boton = $("bt-probar");
   boton.disabled = true;
-  $("bt-estado").textContent = `⏳ Probando «${nombre}» en el tramo de prueba (25% final)...`;
+  $("bt-estado").textContent = `⏳ Probando «${nombre}» en ${p.history} velas...`;
   try {
-    const r = await backtestSingle(nombre, { asset: activo, sim: true, history: historico, expiry: expiracion });
+    const r = await backtestSingle(nombre, p);
+    pintarAviso(r.datos);
     pintarVeredicto(r.veredicto);
-    pintarMetricas(r.res, 0.82, `«${r.estrategia}» — ${r.descripcion || ""}`);
-    pintarSerie($("bt-curva"), r.equity_curve || [],
-      r.veredicto.nivel === "bad" ? "var(--rojo)" : r.veredicto.nivel === "good" ? "var(--verde)" : "#f59e0b");
+    pintarMetricas(r.res, r.payout,
+      `p ajustado ×92 = ${(r.p_ajustado ?? 1).toFixed(3)} · ventanas rentables ${r.ventanas.positivas}/${r.ventanas.total} · «${r.estrategia}» — ${r.descripcion || ""}`);
+    $("bt-comparacion").hidden = true;
+    pintarSerie($("bt-curva"), r.equity_curve || [], colorNivel(r.veredicto.nivel));
     $("bt-estado").textContent = "✔ Backtest individual completado.";
   } catch (e) {
-    $("bt-estado").textContent = `✖ Error: ${e.message}`;
+    $("bt-estado").textContent = `✖ Error: ${explicarError(e)}`;
   } finally {
     boton.disabled = false;
   }

@@ -6,6 +6,7 @@ import {
 import { iniciarDashboard } from "./dashboard.js";
 import { iniciarBacktest } from "./backtest-ui.js";
 import { iniciarConfig } from "./config-ui.js";
+import { iniciarAnalisis } from "./analisis-ui.js";
 import { iniciarReglas } from "./reglas-ui.js";
 
 // Atajo para coger elementos del HTML por su id.
@@ -403,5 +404,6 @@ mostrarZona("laboratorio");
 iniciarDashboard();
 iniciarBacktest();
 iniciarConfig();
+iniciarAnalisis();
 iniciarReglas();
 console.log("TradingLab v2 (binarias IQ Option) arrancada.");

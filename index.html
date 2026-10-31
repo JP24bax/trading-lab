@@ -260,28 +260,52 @@
         <h2>Registro del motor</h2>
         <div id="motor-log" class="motor-log"></div>
       </div>
+
+      <div class="tarjeta">
+        <h2>Evidencia y condiciones</h2>
+        <p class="regla">¿Hay evidencia para pasar a dinero real? Solo cuentan operaciones de la cuenta DEMO de IQ Option
+          (las de simulación son azar). Mínimo 100 operaciones, mejor 200, con UNA estrategia fija, comparadas contra el
+          punto de equilibrio. Abajo, dónde se gana o se pierde; los grupos con menos de 100 operaciones son ruido.</p>
+        <div class="fila-botones"><button id="btn-analisis">🔄 Actualizar análisis</button></div>
+        <p class="bt-veredicto" id="demo-veredicto" hidden></p>
+        <p class="nota-grafica" id="demo-detalle"></p>
+        <div id="analisis-dims"></div>
+      </div>
     </section>
 
-    <!-- Zona Backtest: búsqueda masiva + prueba individual (motor Python). -->
+    <!-- Zona Backtest: walk-forward + prueba individual (motor Python). -->
     <section id="zona-bt" class="zona" hidden>
       <div class="tarjeta">
         <h2>Backtest con histórico (motor Python)</h2>
-        <p class="regla">Ejecuta las 92 estrategias cuantitativas del bot sobre el histórico del activo,
-          simulando spread, slippage y rechazo de órdenes. La búsqueda parte el histórico en
-          entrenamiento (50%), validación (25%) y prueba (25% final, datos no usados para elegir).</p>
+        <p class="regla"><b>Método walk-forward.</b> En cada ventana el motor elige la mejor de las 92 estrategias con
+          datos de entrenamiento y la opera en la ventana siguiente, que no usó para elegir. Se juntan todas esas
+          operaciones «fuera de muestra» y se juzga el procedimiento completo. Los p-valores se ajustan por haber
+          probado 92 estrategias (Holm), los empates cuentan 0 y al payout se le restan 2 puntos por prudencia.</p>
         <div class="fila-botones" style="flex-wrap: wrap; gap: 10px;">
+          <label class="campo-capital">Datos:
+            <select id="bt-fuente">
+              <option value="iq">IQ Option (histórico real, cuenta demo)</option>
+              <option value="sim">Sintético (solo para probar la interfaz)</option>
+            </select>
+          </label>
           <label class="campo-capital">Activo:
             <input id="bt-activo" type="text" value="EURUSD" style="width: 110px;">
           </label>
           <label class="campo-capital">Velas:
-            <input id="bt-historico" type="number" value="5000" min="200" step="100" style="width: 100px;">
+            <input id="bt-historico" type="number" value="10000" min="600" step="500" style="width: 100px;">
           </label>
           <label class="campo-capital">Expiración (min):
             <input id="bt-expiracion" type="number" value="1" min="1" max="15" style="width: 70px;">
           </label>
-          <button id="bt-buscar">🔍 Buscar la mejor (92 estrategias)</button>
         </div>
-        <p class="nota-grafica" id="bt-estado">Elige un activo y lanza la búsqueda, o prueba una estrategia concreta abajo.</p>
+        <div class="fila-botones" style="flex-wrap: wrap; gap: 14px; margin-top: 8px;">
+          <label class="campo-capital"><input id="bt-f-vol" type="checkbox" checked> Filtro de volatilidad (ATR)</label>
+          <label class="campo-capital"><input id="bt-f-tend" type="checkbox" checked> No operar contra la tendencia de 15 min</label>
+          <button id="bt-buscar">🔍 Evaluar el método (92 estrategias)</button>
+        </div>
+        <p class="aviso-datos" id="bt-aviso-datos" hidden></p>
+        <p class="nota-grafica" id="bt-estado">Con datos reales y 10 000 velas (≈7 días de mercado) hay unas 7 ventanas. Pocas operaciones
+          fuera de muestra = resultado no concluyente; es lo normal, no un error.</p>
       </div>
 
       <div class="tarjeta">
@@ -289,21 +313,46 @@
         <p class="regla" id="bt-elegida" hidden></p>
         <div class="cuadros" style="margin-top: 10px;">
           <div class="cuadro" style="grid-column: 1 / -1;">
-            <span class="cuadro-etiqueta">Veredicto (datos de prueba)</span>
+            <span class="cuadro-etiqueta">Veredicto (operaciones fuera de muestra)</span>
             <span class="cuadro-valor" id="bt-veredicto" hidden>—</span>
           </div>
           <div class="cuadro" style="grid-column: 1 / -1;">
             <span class="cuadro-etiqueta">Métricas</span>
             <span class="cuadro-valor" id="bt-metricas" hidden>—</span>
           </div>
+          <div class="cuadro" style="grid-column: 1 / -1;">
+            <span class="cuadro-etiqueta">¿Ayudan los filtros? (mismas ventanas, sin filtros)</span>
+            <span class="cuadro-valor" id="bt-comparacion" hidden>—</span>
+          </div>
         </div>
         <svg id="bt-curva" viewBox="0 0 600 220" preserveAspectRatio="none" role="img"
           aria-label="Curva de equity del backtest"></svg>
-        <p class="nota-grafica">Resultado acumulado en el tramo de prueba (en unidades de apuesta).</p>
+        <p class="nota-grafica">Resultado acumulado fuera de muestra (en unidades de apuesta).</p>
+      </div>
+
+      <div class="tarjeta">
+        <h2>Ventanas del walk-forward</h2>
+        <p class="vacio" id="bt-folds-vacio">Se llena al evaluar el método.</p>
+        <table id="bt-folds-tabla" hidden>
+          <thead>
+            <tr>
+              <th class="num">Ventana</th>
+              <th>Elegida con el entrenamiento</th>
+              <th class="num">WR entrenamiento</th>
+              <th class="num">Ops prueba</th>
+              <th class="num">WR prueba</th>
+            </tr>
+          </thead>
+          <tbody id="bt-folds-cuerpo"></tbody>
+        </table>
+        <p class="nota-grafica">Si una ventana no opera es porque ninguna estrategia superó el equilibrio en su entrenamiento. Una
+          ventaja real debería repetirse en la mayoría de ventanas.</p>
       </div>
 
       <div class="tarjeta">
         <h2>Probar una estrategia concreta</h2>
+        <p class="regla">Usa todo el histórico y los mismos datos/filtros de arriba. Como la eliges entre 92, el p-valor se
+          multiplica por 92 (Bonferroni).</p>
         <div class="fila-botones" style="flex-wrap: wrap; gap: 10px;">
           <label class="campo-capital" style="flex: 1; min-width: 280px;">Estrategia:
             <select id="bt-estrategia" style="flex: 1;"></select>
@@ -313,16 +362,20 @@
       </div>
 
       <div class="tarjeta">
-        <h2>Top 10 de la búsqueda</h2>
+        <h2>Ranking descriptivo</h2>
+        <p class="regla">Ordenado por p-valor ajustado. Es un ranking sobre TODO el histórico, así que describe, no valida:
+          un p ajustado cercano a 1 significa que esa «mejor» estrategia es compatible con la suerte.</p>
         <p class="vacio" id="bt-top-vacio">Aún no hay búsqueda: las 10 mejores aparecen aquí tras lanzarla.</p>
         <table id="bt-top-tabla" hidden>
           <thead>
             <tr>
               <th>Estrategia</th>
-              <th class="num">Ops entrenamiento</th>
-              <th class="num">WR entrenamiento</th>
-              <th class="num">Ops validación</th>
-              <th class="num">WR validación</th>
+              <th class="num">Ops</th>
+              <th class="num">Win rate</th>
+              <th class="num">z</th>
+              <th class="num">p</th>
+              <th class="num">p ajustado</th>
+              <th class="num">Tramos rentables</th>
             </tr>
           </thead>
           <tbody id="bt-top-cuerpo"></tbody>
@@ -351,7 +404,7 @@
           <label class="campo-capital">Activo(s):
             <input id="cfg-activos" type="text" placeholder="EURUSD, GBPUSD, EURUSD-OTC" style="width: 260px;">
           </label>
-          <label class="campo-capital">Importe (COP):
+          <label class="campo-capital">Importe fijo (COP):
             <input id="cfg-amount" type="number" min="1000" step="1000" style="width: 120px;">
           </label>
           <label class="campo-capital">Expiración (min):
@@ -371,7 +424,7 @@
         <div class="fila-botones" style="flex-wrap: wrap; gap: 10px; margin-top: 8px;">
           <label class="campo-capital" style="flex: 1; min-width: 280px;">Estrategia:
             <select id="cfg-strategy" style="flex: 1;">
-              <option value="auto">Automática (el motor elige la mejor del backtest)</option>
+              <option value="auto">Automática (elige con walk-forward y avisa si no hay evidencia)</option>
               <option value="rsi14_30_70">RSI(14) 30/70</option>
               <option value="ema9_21">Cruce EMA 9/21</option>
               <option value="stoch14_20_80">Estocástico 14 (20/80)</option>
@@ -392,16 +445,38 @@
           <label class="campo-capital">Ops máximas:
             <input id="cfg-max-trades" type="number" min="1" max="200" style="width: 70px;">
           </label>
-          <label class="campo-capital">Horario (0-24 h):
+          <label class="campo-capital">Horario (hora Colombia, 0-24):
             <input id="cfg-start-hour" type="number" min="0" max="24" style="width: 60px;">
             <input id="cfg-end-hour" type="number" min="0" max="24" style="width: 60px;">
           </label>
           <label class="campo-capital">Reducir riesgo tras racha (%):
             <input id="cfg-risk-pct" type="number" min="0" max="90" style="width: 70px;">
           </label>
+          <label class="campo-capital">Riesgo por operación (% del saldo, 0 = importe fijo):
+            <input id="cfg-risk-saldo" type="number" min="0" max="5" step="0.5" style="width: 70px;">
+          </label>
         </div>
-        <p class="nota-grafica">El motor pausa la sesión si alcanza la pérdida máxima, la racha negativa o el
-          número de operaciones. Tras 2 pérdidas seguidas reduce el importe el % indicado.</p>
+        <p class="nota-grafica">Con «% del saldo» (recomendado 1-2 %) el importe sigue al saldo: baja cuando pierdes y nunca
+          se aumenta para recuperar. El motor pausa la sesión si alcanza la pérdida máxima, la racha negativa o el
+          número de operaciones, y tras 2 pérdidas seguidas reduce el importe el % indicado. Londres + Nueva York
+          ≈ 7:00-16:00 hora Colombia.</p>
+      </div>
+
+      <div class="tarjeta">
+        <h2>Filtros de mercado</h2>
+        <p class="nota-grafica">Ningún filtro crea ventaja: solo reducen cuántas veces operas. La pestaña Backtest muestra si
+          ayudan con tus datos, y «Evidencia y condiciones» (pestaña Motor Bot) lo mide con tus operaciones reales.</p>
+        <div class="fila-botones" style="flex-wrap: wrap; gap: 14px;">
+          <label class="campo-capital"><input id="cfg-f-vol" type="checkbox" checked> Volatilidad (evita mercado plano o extremo)</label>
+          <label class="campo-capital"><input id="cfg-f-tend" type="checkbox" checked> No operar contra la tendencia de 15 min</label>
+          <label class="campo-capital">Payout mínimo (%):
+            <input id="cfg-payout-min" type="number" min="50" max="95" step="1" style="width: 70px;">
+          </label>
+          <label class="campo-capital"><input id="cfg-rotar" type="checkbox"> Rotar de estrategia tras perder (no recomendado)</label>
+        </div>
+        <p class="nota-grafica">Cada filtro descarta la señal y deja una línea «🚫» en el registro. Fines de semana el
+          motor no opera activos que no sean OTC (el mercado está cerrado). Rotar de estrategia tras perder es el sesgo del
+          jugador: no mejora nada y dificulta medir una estrategia fija.</p>
       </div>
 
       <div class="tarjeta">

@@ -18,19 +18,30 @@ import json
 import os
 import threading
 import time
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Set
 
+import numpy as np
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 import bot
 import backtest
+import analisis
+import filtros as flt
 from ai_filter import LABELS, PROVIDERS, ai_ping, get_key, save_key
 from strategies import STRATEGIES, custom_rule_strategy, get_strategy_description
 
-app = FastAPI(title="TradingLab Engine", version="1.0.0")
+@asynccontextmanager
+async def _ciclo_vida(_app: FastAPI):
+    global loop_principal
+    loop_principal = asyncio.get_running_loop()
+    yield
+
+
+app = FastAPI(title="TradingLab Engine", version="1.1.0", lifespan=_ciclo_vida)
 
 # La web corre en localhost:3000 (dev) y en Vercel (prod). CLIENT_URL permite
 # anadir el dominio real de produccion sin tocar el codigo (var. de entorno).
@@ -76,12 +87,6 @@ async def _difundir_async(mensaje: str) -> None:
 
 # El motor llama a bot.ON_EVENT desde su hilo: lo redirigimos al bus.
 bot.ON_EVENT = _difundir
-
-
-@app.on_event("startup")
-async def _al_arrancar() -> None:
-    global loop_principal
-    loop_principal = asyncio.get_running_loop()
 
 
 # ── Estado de sesión en el servidor ────────────────────────────────────────
@@ -137,6 +142,16 @@ class ConfigSesion(BaseModel):
     end_hour: int = Field(default=24, ge=0, le=24)
     risk_streak_trigger: int = 2
     risk_reduction_pct: float = Field(default=50, ge=0, le=90)
+    # Riesgo por operación como % del saldo (0 = usar el importe fijo). Tope 5 %: más es ruina asegurada.
+    risk_pct: float = Field(default=0, ge=0, le=5)
+    # Filtros de contexto (ver filtros.py)
+    filtro_volatilidad: bool = True
+    atr_min: float = Field(default=0.6, ge=0.1, le=1.5)
+    atr_max: float = Field(default=2.0, ge=1.0, le=5.0)
+    filtro_tendencia: bool = True
+    payout_minimo: float = Field(default=0.80, ge=0.5, le=0.95)
+    tz_offset: int = Field(default=-5, ge=-12, le=14)   # zona horaria de start_hour/end_hour (Colombia = -5)
+    rotar_estrategia: bool = False                      # rotar tras perder = sesgo del jugador; solo opt-in
     cop_rate: Optional[float] = None
     email: Optional[str] = None
     password: Optional[str] = None
@@ -149,8 +164,12 @@ class PeticionStop(BaseModel):
 class PeticionBacktest(BaseModel):
     asset: str = "EURUSD"
     sim: bool = True
-    history: int = Field(default=5000, ge=200)
+    history: int = Field(default=5000, ge=600)
     expiry: int = Field(default=1, ge=1, le=15)
+    filtro_volatilidad: bool = True
+    filtro_tendencia: bool = True
+    margen_payout: float = Field(default=0.02, ge=0, le=0.2)   # se resta al payout actual (conservador)
+    comparar: bool = True                                      # comparar también sin filtros
     email: Optional[str] = None
     password: Optional[str] = None
 
@@ -228,58 +247,127 @@ def estado_sesion() -> dict:
     }
 
 
+def _aviso_datos(b, fuente_payout: str) -> dict:
+    sint = bool(getattr(b, "synthetic", False))
+    return {
+        "sintetico": sint,
+        "fuente": "sintetico" if sint else "iqoption",
+        "payout_fuente": fuente_payout,
+        "aviso": ("DATOS SINTÉTICOS: serie aleatoria generada por el motor. Ninguna estrategia puede tener ventaja "
+                  "aquí; úsalo solo para probar la interfaz. Para estudiar de verdad elige IQ Option (histórico real).")
+                 if sint else
+                 ("Histórico real de IQ Option. El payout histórico no está disponible: se usa el actual menos un "
+                  "margen conservador." + (" ⚠ No se pudo leer el payout real: se asumió 80 %." if fuente_payout == "supuesto" else "")),
+    }
+
+
+def _resumen(st: dict) -> dict:
+    return {k: st[k] for k in ("n", "wins", "winrate", "pnl", "z", "p", "ev", "profit_factor", "max_loss_streak", "ties") if k in st}
+
+
 @app.post("/backtest/search")
 def backtest_busqueda(p: PeticionBacktest) -> dict:
-    """Corre la búsqueda masiva (80+ estrategias) sobre histórico real o sintético.
-    Equivalente a do_analyze de la GUI. Puede tardar varios segundos."""
+    """Walk-forward sobre las 90+ estrategias: elige en una ventana, opera la siguiente (fuera de muestra).
+    El veredicto juzga ese PROCEDIMIENTO. El ranking incluye p-valores ajustados por comparaciones múltiples."""
     try:
         b = _broker(p.sim, p.email, p.password)
-        pay = b.get_payout(p.asset)
+        pay_broker, fuente = b.get_payout_detail(p.asset)
         df = b.candles_history(p.asset, 60, p.history)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Error de conexión con el bróker: {e}")
 
-    name, tabla, info = backtest.search(df, expiry_candles=p.expiry, payout=pay)
-    te = info.get("test", backtest._empty_result())
-    texto, nivel = backtest.verdict(te, pay)
-    return {
-        "elegida": name,
-        "descripcion": get_strategy_description(name),
-        "candidates": info.get("candidates", 0),
-        "tested": info.get("tested", 0),
+    pay = max(0.5, pay_broker - p.margen_payout)
+    cfg = {**flt.FILTROS_DEFECTO, "volatilidad": p.filtro_volatilidad, "tendencia": p.filtro_tendencia}
+    usa_filtros = p.filtro_volatilidad or p.filtro_tendencia
+    datos = _aviso_datos(b, fuente)
+    a = backtest.analisis_completo(df, p.expiry, pay, cfg if usa_filtros else None,
+                                   comparar=p.comparar, sintetico=datos["sintetico"])
+    wf = a["walk"]
+    texto, nivel = a["veredicto"]
+    actual = a["actual"]
+    top = a["top"]
+    sin = a["walk_sin_filtros"]
+    return backtest._num({
+        "elegida": actual[0] if actual else None,
+        "descripcion": get_strategy_description(actual[0]) if actual else "",
+        "elegida_reciente": ({"winrate": actual[1], "z": actual[2], "n": actual[3]} if actual else None),
+        "candidates": a["candidatas"],
+        "tested": a["senales"],
         "payout": pay,
+        "payout_broker": pay_broker,
         "velas": len(df),
-        "test": {k: te[k] for k in ("n", "wins", "winrate", "pnl", "z", "ev", "profit_factor", "max_loss_streak") if k in te},
-        "equity_curve": te.get("equity_curve", []),
+        "datos": datos,
+        "filtros": cfg if usa_filtros else None,
+        "test": _resumen(wf["oos"]),
+        "equity_curve": wf["oos"].get("equity_curve", []),
         "veredicto": {"texto": texto, "nivel": nivel},
-        "top10": tabla.round(3).to_dict("records") if hasattr(tabla, "to_dict") else [],
-    }
+        "walk": {k: wf[k] for k in ("ventanas_total", "ventanas_operadas", "ventanas_positivas", "train", "test",
+                                    "folds", "frecuencia_elegidas")},
+        "sin_filtros": (_resumen(sin["oos"]) if sin else None),
+        "top10": top.round(4).to_dict("records") if hasattr(top, "to_dict") else [],
+    })
 
 
 @app.post("/backtest/single")
-def backtest_simple(nombre: str, asset: str = "EURUSD", sim: bool = True,
-                    history: int = 5000, expiry: int = 1) -> dict:
-    """Prueba una estrategia concreta en el tramo de prueba (25 % final)."""
+def backtest_simple(nombre: str, asset: str = "EURUSD", sim: bool = True, history: int = 5000, expiry: int = 1,
+                    margen_payout: float = 0.02, filtro_volatilidad: bool = True, filtro_tendencia: bool = True) -> dict:
+    """Prueba UNA estrategia sobre todo el histórico, dividido en ventanas para ver si es consistente. Como el usuario
+    la eligió entre 90+, el p-valor se ajusta (Bonferroni) por ese número de estrategias."""
     if nombre not in STRATEGIES:
         raise HTTPException(status_code=404, detail=f"Estrategia '{nombre}' no existe")
     try:
         b = _broker(sim, None, None)
-        df = b.candles_history(asset, 60, history)
+        pay_broker, fuente = b.get_payout_detail(asset)
+        df = b.candles_history(asset, 60, max(history, 600))
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Error de conexión con el bróker: {e}")
 
-    n = len(df)
-    corte = int(n * 0.75)
-    sig = STRATEGIES[nombre](df)
-    res = backtest.evaluate(df.iloc[corte:], sig.iloc[corte:], expiry_candles=expiry)
-    texto, nivel = backtest.verdict(res)
-    return {
+    pay = max(0.5, pay_broker - margen_payout)
+    datos = _aviso_datos(b, fuente)
+    senales = backtest.calcular_senales(df, [nombre])
+    if nombre not in senales:
+        raise HTTPException(status_code=422, detail=f"No se pudo calcular '{nombre}' con estos datos")
+    sig = senales[nombre]
+    cfg = {**flt.FILTROS_DEFECTO, "volatilidad": filtro_volatilidad, "tendencia": filtro_tendencia}
+    if filtro_volatilidad or filtro_tendencia:
+        sig = np.where(flt.mascara_permitida(flt.precalcular(df, cfg), sig, cfg), sig, 0)
+    res, op = backtest.resultados(df, sig, expiry)
+    st = backtest.estadisticas(res, op, pay)
+
+    _, test = backtest.ventanas_por_defecto(len(df))
+    pos = tot = 0
+    for ini in range(0, len(df) - test + 1, test):
+        if op[ini:ini + test].sum() >= 5:
+            tot += 1
+            pos += int(backtest.estadisticas(res[ini:ini + test], op[ini:ini + test], pay, 2)["ev"] > 0)
+    p_adj = min(1.0, st["p"] * len(STRATEGIES))
+    texto, nivel = backtest.verdict(st, pay, p_adj=p_adj, folds=(pos, tot), sintetico=datos["sintetico"])
+    return backtest._num({
         "estrategia": nombre,
         "descripcion": get_strategy_description(nombre),
-        "res": {k: res[k] for k in ("n", "wins", "winrate", "pnl", "z", "ev", "profit_factor", "max_loss_streak") if k in res},
-        "equity_curve": res.get("equity_curve", []),
+        "payout": pay,
+        "datos": datos,
+        "res": _resumen(st),
+        "p_ajustado": p_adj,
+        "ventanas": {"positivas": pos, "total": tot},
+        "equity_curve": st.get("equity_curve", []),
         "veredicto": {"texto": texto, "nivel": nivel},
-    }
+    })
+
+
+@app.get("/session/analisis")
+def analisis_operaciones() -> dict:
+    """Agrupa las operaciones guardadas por hora, activo, estrategia, volatilidad y tendencia (punto: medir, no adivinar).
+    Los grupos con menos de 100 operaciones se marcan como ruido."""
+    trades = (bot.load_session_state() or {}).get("trades", [])
+    return backtest._num(analisis.analizar_operaciones(trades))
+
+
+@app.get("/session/demo")
+def veredicto_demo() -> dict:
+    """Puerta de la cuenta demo: ¿hay evidencia suficiente (100-200 operaciones, una estrategia, vs equilibrio)?"""
+    trades = (bot.load_session_state() or {}).get("trades", [])
+    return backtest._num(analisis.veredicto_demo(trades))
 
 
 @app.post("/strategies/custom")

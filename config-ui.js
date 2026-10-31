@@ -29,6 +29,11 @@ function cfgPorDefecto() {
     max_trades: 30,
     start_hour: 0, end_hour: 24,
     risk_reduction_pct: 50,
+    risk_pct: 1,                 // % del saldo por operación (0 = importe fijo)
+    filtro_volatilidad: true,
+    filtro_tendencia: true,
+    payout_minimo: 0.80,
+    rotar_estrategia: false,
   };
 }
 
@@ -60,6 +65,11 @@ function leerFormulario() {
     start_hour: Math.min(24, Math.max(0, Math.round(num("cfg-start-hour", 0)))),
     end_hour: Math.min(24, Math.max(0, Math.round(num("cfg-end-hour", 24)))),
     risk_reduction_pct: Math.min(90, Math.max(0, num("cfg-risk-pct", 50))),
+    risk_pct: Math.min(5, Math.max(0, num("cfg-risk-saldo", 1))),
+    filtro_volatilidad: $("cfg-f-vol").checked,
+    filtro_tendencia: $("cfg-f-tend").checked,
+    payout_minimo: Math.min(95, Math.max(50, num("cfg-payout-min", 80))) / 100,
+    rotar_estrategia: $("cfg-rotar").checked,
     engine_url,
   };
   // Clave IA solo si hay proveedor elegido.
@@ -84,6 +94,11 @@ function pintarFormulario(cfg) {
   $("cfg-start-hour").value = cfg.start_hour ?? 0;
   $("cfg-end-hour").value = cfg.end_hour ?? 24;
   $("cfg-risk-pct").value = cfg.risk_reduction_pct ?? 50;
+  $("cfg-risk-saldo").value = cfg.risk_pct ?? 1;
+  $("cfg-f-vol").checked = cfg.filtro_volatilidad ?? true;
+  $("cfg-f-tend").checked = cfg.filtro_tendencia ?? true;
+  $("cfg-payout-min").value = Math.round((cfg.payout_minimo ?? 0.80) * 100);
+  $("cfg-rotar").checked = cfg.rotar_estrategia ?? false;
   alternarLogin();
 }
 
@@ -99,12 +114,15 @@ async function guardarEIniciar() {
   const panel = $("cfg-resultado");
 
   // Validación cruzada de riesgos (como validate_cross_risks de la GUI).
-  if (cfg.amount >= cfg.max_loss) {
+  if (cfg.risk_pct === 0 && cfg.amount >= cfg.max_loss) {
     mostrar(`⚠️ El importe por operación (${cfg.amount} COP) es mayor o igual a la pérdida máxima (${cfg.max_loss} COP). Ajusta los límites.`, "error");
     return;
   }
   if (!cfg.sim && (!cfg.email || !cfg.password)) {
     mostrar("❌ Modo IQ Option: escribe tu correo y contraseña (o usa Simulación).", "error");
+    return;
+  }
+  if (cfg.rotar_estrategia && !confirm("Rotar de estrategia tras perder es el sesgo del jugador: no mejora los resultados y hace imposible medir una estrategia fija. ¿Continuar de todos modos?")) {
     return;
   }
   if (cfg.ai !== "none" && !cfg.ai_key && !confirm(`Filtro IA elegido (${cfg.ai}) sin clave API: el filtro quedará desactivado si no hay clave guardada en el motor. ¿Continuar?`)) {
@@ -129,7 +147,7 @@ async function guardarEIniciar() {
     await iniciarSesion(cfg);
     panel.className = "webhook-resultado exito";
     panel.textContent = `✅ Sesión iniciada en modo ${cfg.sim ? "SIMULACIÓN" : "IQ Option DEMO"}. ` +
-      `Activo(s): ${cfg.assets.join(", ")} · ${cfg.amount} COP · expiración ${cfg.expiry} min · ` +
+      `Activo(s): ${cfg.assets.join(", ")} · ${cfg.risk_pct > 0 ? cfg.risk_pct + " % del saldo" : cfg.amount + " COP"} · expiración ${cfg.expiry} min · ` +
       `máx. ${cfg.max_trades} ops · pérdida máx. ${cfg.max_loss} COP. Mira el progreso en la pestaña "Motor Bot".`;
   } catch (e) {
     panel.className = "webhook-resultado error";
