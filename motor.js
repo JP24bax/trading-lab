@@ -96,9 +96,17 @@ export const pararSesion = (modo) => api("/session/stop", { modo });
 export const estadoSesion = () => api("/session/state");
 export const listarEstrategias = () => api("/strategies");
 export const backtestBusqueda = (p) => api("/backtest/search", p);
-export const backtestSingle = (nombre, p = {}) =>
-  api(`/backtest/single?nombre=${encodeURIComponent(nombre)}&asset=${p.asset || "EURUSD"}&sim=${p.sim !== false}&history=${p.history || 2000}&expiry=${p.expiry || 1}`, {});
+export const backtestSingle = (nombre, p = {}) => {
+  const q = new URLSearchParams({
+    nombre, asset: p.asset || "EURUSD", sim: String(p.sim !== false), history: String(p.history || 5000),
+    expiry: String(p.expiry || 1), filtro_volatilidad: String(p.filtro_volatilidad !== false),
+    filtro_tendencia: String(p.filtro_tendencia !== false),
+  });
+  return api(`/backtest/single?${q}`, {});
+};
 export const guardarRegla = (r) => api("/strategies/custom", r);
+export const analisisOperaciones = () => api("/session/analisis");
+export const veredictoDemo = () => api("/session/demo");
 export const aiPing = (proveedor, clave) => api("/ai/ping", { proveedor, clave });
 
 // Estado inicial (sesión persistida) por HTTP, por si el WS tarda.

@@ -75,6 +75,7 @@ body {
 main { padding: 16px; max-width: 900px; margin: 0 auto; }
 
 .zona { display: grid; gap: 14px; }
+.zona[hidden] { display: none; }   /* sin esto, display:grid anula 'hidden' y todas las pestañas se ven a la vez */
 
 .tarjeta {
   background: var(--surface);
@@ -344,3 +345,8 @@ button.boton-rojo { background: var(--rojo); color: #fff; }
 }
 .regla-item strong { color: var(--accent); font-family: var(--mono); font-size: 0.8rem; }
 .regla-item span { color: var(--muted); }
+
+/* Avisos de datos (backtest) y filas de muestra insuficiente (análisis de operaciones) */
+.aviso-datos { margin: 10px 0 0; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; color: var(--muted); }
+.aviso-datos.sint { border-color: #f59e0b; color: #f59e0b; background: rgba(245, 158, 11, 0.08); }
+.fila-ruido td { opacity: 0.5; }

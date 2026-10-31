@@ -24,6 +24,11 @@ class SimBroker:
     def get_payout(self, asset):
         return self.payout
 
+    def get_payout_detail(self, asset):
+        return self.payout, "sintético"
+
+    synthetic = True
+
     def candles(self, asset, size=60, count=200):
         r = self.rng.normal(0, 0.0004, count + 1)
         c = self.price * np.exp(np.cumsum(r))
@@ -34,7 +39,11 @@ class SimBroker:
         return pd.DataFrame(dict(open=o, high=h, low=l, close=c))[:count]
 
     def candles_history(self, asset, size=60, total=15000):
-        return self.candles(asset, size, total)
+        df = self.candles(asset, size, total).copy()
+        # marcas de tiempo sintéticas (la última vela termina ahora) para poder aplicar filtros de horario
+        fin = int(time.time() // size) * size
+        df["t"] = fin - size * np.arange(len(df) - 1, -1, -1)
+        return df
 
     def buy(self, asset, amount, direction, minutes):
         win = self.rng.random() < 0.5
@@ -110,13 +119,20 @@ class IQBroker:
         f = f / 100 if f > 1 else f
         return f if 0.3 < f < 1.0 else None
 
-    def get_payout(self, asset):
+    synthetic = False
+
+    def get_payout_detail(self, asset):
+        """(payout, fuente). fuente = 'real' si lo informó el bróker; 'supuesto' si falló y se usa 80 %."""
         try:
             p = self._num(self.api.get_all_profit().get(asset))
-            if p: return p
+            if p:
+                return p, "real"
         except Exception:
             pass
-        return 0.80
+        return 0.80, "supuesto"
+
+    def get_payout(self, asset):
+        return self.get_payout_detail(asset)[0]
 
     def currency(self):
         try:
@@ -147,7 +163,8 @@ class IQBroker:
             raise RuntimeError(f"No fue posible descargar histórico para {asset}")
         df = pd.DataFrame(out).drop_duplicates("from").sort_values("from")
         df = df.rename(columns={"max": "high", "min": "low"})
-        return df[["open", "high", "low", "close"]].reset_index(drop=True)
+        df["t"] = df["from"]
+        return df[["open", "high", "low", "close", "t"]].reset_index(drop=True)
 
     def buy(self, asset, amount, direction, minutes):
         act = "call" if direction == 1 else "put"
