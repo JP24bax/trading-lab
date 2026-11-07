@@ -87,24 +87,23 @@ export function bandasBollinger(cierra, n, i, mult = 2) {
 
 const cacheMacd = new WeakMap();
 export function macd(cierra, i, rapida = 12, lenta = 26, senal = 9) {
-  if (i < lenta + senal) return null;
+  const ini = lenta + senal;
+  if (i < ini) return null;
   const k = 2 / (senal + 1);
   let cache = cacheMacd.get(cierra);
   if (!cache) { cache = new Map(); cacheMacd.set(cierra, cache); }
   const clave = `${rapida}:${lenta}:${senal}`;
-  if (cache.has(clave)) return cache.get(clave);
-  // Se calcula toda la serie hasta i de una pasada, cacheando cada vela.
-  let s = null, linea = null;
-  for (let j = lenta + senal; j <= i; j++) {
-    linea = ema(cierra, rapida, j) - ema(cierra, lenta, j);
-    s = s === null ? linea : linea * k + s * (1 - k);
-    cache.set(clave, { linea, senal: s, hist: linea - s, idx: j });
-    // Guardamos por índice para no pisar resultados de llamadas con i menor.
-    cache.set(`${clave}@${j}`, cache.get(clave));
+  // Estado por (serie, parámetros): valores[j] para CADA vela j ya calculada. La señal es una EMA de la línea MACD,
+  // así que se extiende hacia delante una sola vez y cualquier índice consultado después devuelve SU valor.
+  let est = cache.get(clave);
+  if (!est) { est = { hasta: ini - 1, s: null, valores: [] }; cache.set(clave, est); }
+  for (let j = est.hasta + 1; j <= i; j++) {
+    const linea = ema(cierra, rapida, j) - ema(cierra, lenta, j);
+    est.s = est.s === null ? linea : linea * k + est.s * (1 - k);
+    est.valores[j] = { linea, senal: est.s, hist: linea - est.s, idx: j };
+    est.hasta = j;
   }
-  const ultimo = cache.get(`${clave}@${i}`);
-  cache.set(clave, ultimo); // la entrada por clave queda en el índice más lejano
-  return ultimo;
+  return est.valores[i] ?? null;
 }
 
 const cacheStoch = new WeakMap();
@@ -225,7 +224,7 @@ function cumple(cond, velas, cierra, i, lado) {
   }
 }
 
-function senal(e, velas, cierra, i) {
+export function senal(e, velas, cierra, i) {
   if (e.entrada_call.every((c) => cumple(c, velas, cierra, i))) return "CALL";
   if (e.entrada_put.every((c) => cumple(c, velas, cierra, i))) return "PUT";
   return null;
@@ -319,40 +318,65 @@ export function aJSON(e) {
 }
 
 // ── Motor de exportación: script Python autónomo ────────────────────────
-// Compila la lógica condicional en un .py que usa pandas_ta sobre datos de IQ Option.
+// Compila la lógica condicional en un .py que reproduce la MISMA lógica que el evaluador JS (cumple()):
+// mismos periodos, mismo RSI (sumas simples de las últimas n variaciones), estocástico sin suavizar y bandas
+// con desviación poblacional. Cada indicador que usa la estrategia se calcula con SU periodo.
 export function aPython(e, payout = 0.8) {
-  const condPy = (c, v = "df") => {
-    const p = c.periodo_rapida ?? c.periodo ?? 14;
+  const per = (c) => c.periodo ?? c.periodo_rapida ?? 14;   // igual que cumple(): periodo lento / único
+  const rap = (c) => c.periodo_rapida ?? 9;                 // periodo rápido de los cruces EMA/SMA
+  const todas = [...e.entrada_call, ...e.entrada_put];
+
+  const condPy = (c) => {
+    const p = per(c);
     switch (c.indicador) {
       case "RSI": return `(df["rsi_${p}"] ${c.operador === "menor_que" ? "<" : ">"} ${c.umbral})`;
       case "STOCH": return `(df["stoch_${p}"] ${c.operador === "menor_que" ? "<" : ">"} ${c.umbral})`;
       case "BOLLINGER": {
-        const banda = c.banda === "sup" ? "bbl_20_2" : "bbu_20_2";
+        const banda = c.banda === "sup" ? "bbu_20_2" : "bbl_20_2";   // sup = banda SUPERIOR (antes estaba invertido)
         return c.operador === "cruce_alcista"
           ? `((df["close"].shift(1) < df["${banda}"].shift(1)) & (df["close"] > df["${banda}"]))`
           : `((df["close"].shift(1) > df["${banda}"].shift(1)) & (df["close"] < df["${banda}"]))`;
       }
-      case "EMA": return c.operador === "cruce_alcista"
-        ? `((df["ema_${c.periodo_rapida}"].shift(1) <= df["ema_${p}"].shift(1)) & (df["ema_${c.periodo_rapida}"] > df["ema_${p}"]))`
-        : `((df["ema_${c.periodo_rapida}"].shift(1) >= df["ema_${p}"].shift(1)) & (df["ema_${c.periodo_rapida}"] < df["ema_${p}"]))`;
-      case "SMA": return c.operador === "cruce_alcista"
-        ? `((df["sma_${c.periodo_rapida}"].shift(1) <= df["sma_${p}"].shift(1)) & (df["sma_${c.periodo_rapida}"] > df["sma_${p}"]))`
-        : `((df["sma_${c.periodo_rapida}"].shift(1) >= df["sma_${p}"].shift(1)) & (df["sma_${c.periodo_rapida}"] < df["sma_${p}"]))`;
+      case "EMA": case "SMA": {
+        const t = c.indicador === "EMA" ? "ema" : "sma";
+        const f = `df["${t}_${rap(c)}"]`, l = `df["${t}_${p}"]`;
+        return c.operador === "cruce_alcista"
+          ? `((${f}.shift(1) <= ${l}.shift(1)) & (${f} > ${l}))`
+          : `((${f}.shift(1) >= ${l}.shift(1)) & (${f} < ${l}))`;
+      }
       case "MACD": return c.operador === "cruce_alcista"
         ? `((df["macdh_12_26_9"].shift(1) <= 0) & (df["macdh_12_26_9"] > 0))`
         : `((df["macdh_12_26_9"].shift(1) >= 0) & (df["macdh_12_26_9"] < 0))`;
       default: return "False";
     }
   };
-  const call = e.entrada_call.map((c) => condPy(c)).join(" & ");
-  const put = e.entrada_put.map((c) => condPy(c)).join(" & ");
+
+  // Una línea de pandas por indicador necesario (sin duplicados).
+  const cols = new Set();
+  for (const c of todas) {
+    const p = per(c);
+    switch (c.indicador) {
+      case "RSI": cols.add(`df["rsi_${p}"] = rsi_simple(df["close"], ${p})`); break;
+      case "STOCH": cols.add(`df["stoch_${p}"] = col(ta.stoch(df["high"], df["low"], df["close"], k=${p}, d=3, smooth_k=1), "STOCHk")`); break;
+      case "EMA": cols.add(`df["ema_${rap(c)}"] = ta.ema(df["close"], ${rap(c)})`); cols.add(`df["ema_${p}"] = ta.ema(df["close"], ${p})`); break;
+      case "SMA": cols.add(`df["sma_${rap(c)}"] = ta.sma(df["close"], ${rap(c)})`); cols.add(`df["sma_${p}"] = ta.sma(df["close"], ${p})`); break;
+      case "BOLLINGER":
+        cols.add(`bb = ta.bbands(df["close"], 20, 2)`);
+        cols.add(`df["bbl_20_2"], df["bbu_20_2"] = col(bb, "BBL"), col(bb, "BBU")`);
+        break;
+      case "MACD": cols.add(`df["macdh_12_26_9"] = col(ta.macd(df["close"], 12, 26, 9), "MACDh")`); break;
+    }
+  }
+  const indicadores = [...cols].map((l) => "    " + l).join("\n") || "    pass";
+  // Cada condición es una Serie booleana: se toma la ÚLTIMA vela (un `if serie:` fallaría con ValueError).
+  const sup = (lista) => lista.length ? `bool((${lista.map(condPy).join(" & ")}).iloc[-1])` : "False";
 
   return `# ${e.nombre} — generado por TradingLab
 # Estrategia binaria para IQ Option · PAYOUT = ${payout}
 # Requiere: pip install pandas pandas-ta iqoptionapi  (o iqoptionapi-stable-api)
 import time
 import pandas as pd
-import pandas_ta as ta                     # indicadores: RSI, EMA, SMA, BB, MACD, STOCH
+import pandas_ta as ta                     # indicadores: SMA, EMA, BB, MACD, STOCH
 from iqoptionapi.stable_api import IQ_Option
 
 EMAIL = "tu_correo@ejemplo.com"            # ← configura tus credenciales (usa cuenta PRACTICE)
@@ -364,28 +388,36 @@ TIPO = "${e.gestion.tipo_operacion}"
 PAYOUT_MINIMO = ${e.gestion.payout_minimo}
 PAYOUT = ${payout}
 
+def rsi_simple(close, n):
+    """RSI con sumas simples de las últimas n variaciones (el mismo que usa el laboratorio de TradingLab)."""
+    d = close.diff()
+    sube = d.clip(lower=0).rolling(n).sum()
+    baja = (-d.clip(upper=0)).rolling(n).sum()
+    rsi = 100 - 100 / (1 + sube / baja)
+    return rsi.where((sube + baja) != 0, 50.0)
+
+def col(tabla, prefijo):
+    """Columna de pandas_ta por prefijo (el nombre exacto cambia entre versiones: BBL_20_2.0 o BBL_20_2.0_2.0)."""
+    return tabla[[c for c in tabla.columns if c.startswith(prefijo)][0]]
+
+def calcular_indicadores(df):
+${indicadores}
+    return df
+
 def obtener_velas(iq, activo=ACTIVO, velas=200, timeframe=60):
     iq.start_candles_stream(activo, timeframe, velas)
     time.sleep(2)
     datos = iq.get_realtime_candles(activo, timeframe)
     iq.stop_candles_stream(activo)
-    df = pd.DataFrame(datos).T
+    df = pd.DataFrame(datos).T.sort_index()
     df = df.rename(columns={"max": "high", "min": "low"})
-    df["close"] = df["close"].astype(float)
-    df["rsi_14"] = ta.rsi(df["close"], 14)
-    df["ema_9"], df["ema_21"], df["ema_50"] = ta.ema(df["close"], 9), ta.ema(df["close"], 21), ta.ema(df["close"], 50)
-    df["sma_10"], df["sma_50"] = ta.sma(df["close"], 10), ta.sma(df["close"], 50)
-    bb = ta.bbands(df["close"], 20)
-    df["bbl_20_2"], df["bbu_20_2"] = bb["BBL_20_2.0"], bb["BBU_20_2.0"]
-    macd = ta.macd(df["close"])
-    df["macdh_12_26_9"] = macd["MACDh_12_26_9"]
-    df["stoch_14"] = ta.stoch(df["high"], df["low"], df["close"], 14)["STOCHk_14_3_3"]
-    return df
+    for col in ("open", "high", "low", "close"):
+        df[col] = df[col].astype(float)
+    return calcular_indicadores(df)
 
 def hay_senal(df):
-    ultima = df.iloc[-1]
-    call = ${call}
-    put = ${put}
+    call = ${sup(e.entrada_call)}
+    put = ${sup(e.entrada_put)}
     if call: return "CALL"
     if put: return "PUT"
     return None
@@ -397,10 +429,10 @@ def operar(iq, direccion):
         print(f"[SKIP] payout {payout_actual:.0%} < {PAYOUT_MINIMO:.0%}")
         return
     if TIPO == "BINARY":
-        resultado = iq.buy(MONTO, ACTIVO, direccion, EXPIRACION_MIN)
+        resultado = iq.buy(MONTO, ACTIVO, direccion.lower(), EXPIRACION_MIN)
     else:
-        resultado = iq.buy_digital_spot_v2(ACTIVO, MONTO, direccion, EXPIRACION_MIN)
-    print(f"[ORDEN] {direccion} {ACTIVO} {MONTO}€ exp={EXPIRACION_MIN}m → {resultado}")
+        resultado = iq.buy_digital_spot_v2(ACTIVO, MONTO, direccion.lower(), EXPIRACION_MIN)
+    print(f"[ORDEN] {direccion} {ACTIVO} {MONTO} exp={EXPIRACION_MIN}m → {resultado}")
 
 def main():
     iq = IQ_Option(EMAIL, PASSWORD)

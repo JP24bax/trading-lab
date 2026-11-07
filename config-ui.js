@@ -1,6 +1,6 @@
 // config-ui.js — Pestaña "Config": modo de conexión, credenciales, riesgos, horario y filtro IA.
 // Construye el objeto de configuración que consume /session/start (SimpleNamespace del motor).
-import { iniciarSesion, aiPing } from "./motor.js";
+import { iniciarSesion, aiPing, listarEstrategias } from "./motor.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -71,6 +71,7 @@ function leerFormulario() {
     payout_minimo: Math.min(95, Math.max(50, num("cfg-payout-min", 80))) / 100,
     rotar_estrategia: $("cfg-rotar").checked,
     engine_url,
+    engine_token: ($("cfg-token").value.trim() || null),
   };
   // Clave IA solo si hay proveedor elegido.
   cfg.ai_key = cfg.ai === "none" ? null : ($("cfg-ai-key").value.trim() || null);
@@ -80,6 +81,7 @@ function leerFormulario() {
 // ─ Objeto → form (al cargar la página) ─────────────
 function pintarFormulario(cfg) {
   $("cfg-engine-url").value = cfg.engine_url || "http://localhost:8100";
+  $("cfg-token").value = cfg.engine_token || "";
   $("cfg-modo").value = cfg.sim ? "sim" : "iq";
   $("cfg-email").value = cfg.email || "";
   $("cfg-password").value = cfg.password || "";
@@ -120,6 +122,9 @@ async function guardarEIniciar() {
   }
   if (!cfg.sim && (!cfg.email || !cfg.password)) {
     mostrar("❌ Modo IQ Option: escribe tu correo y contraseña (o usa Simulación).", "error");
+    return;
+  }
+  if (cfg.strategy === "auto" && !confirm("«Automática» vuelve a elegir estrategia cada vez que inicias el bot, así que tu prueba de demo mezclaría estrategias distintas. Para medir una, elígela fija en el desplegable. ¿Iniciar en automático de todos modos?")) {
     return;
   }
   if (cfg.rotar_estrategia && !confirm("Rotar de estrategia tras perder es el sesgo del jugador: no mejora los resultados y hace imposible medir una estrategia fija. ¿Continuar de todos modos?")) {
@@ -176,9 +181,33 @@ async function probarIA() {
   }
 }
 
+// Carga las 92 estrategias del motor en el desplegable (si el motor no responde, quedan las 4 de siempre).
+async function cargarCatalogo() {
+  try {
+    const cat = await listarEstrategias();
+    const sel = $("cfg-strategy");
+    const actual = sel.value;
+    const auto = [...sel.options].find((o) => o.value === "auto");
+    const opciones = cat.estrategias.map((e) => {
+      const o = document.createElement("option");
+      o.value = e.nombre;
+      o.textContent = `${e.nombre} — ${e.descripcion.slice(0, 70)}`;
+      return o;
+    });
+    sel.replaceChildren(auto, ...opciones);
+    sel.value = [...sel.options].some((o) => o.value === actual) ? actual : "auto";
+  } catch { /* motor no disponible ahora */ }
+}
+
 export function iniciarConfig() {
   if (!$("cfg-modo")) return;
   pintarFormulario(cargarCfg());
+  cargarCatalogo();
+  $("cfg-engine-url").addEventListener("change", () => {
+    // La URL y el token se leen de lo guardado: guárdalos para que el catálogo use los nuevos.
+    guardarCfg(leerFormulario());
+    cargarCatalogo();
+  });
   $("cfg-modo").addEventListener("change", alternarLogin);
   $("cfg-ai").addEventListener("change", () => { $("cfg-ai-key-row").hidden = $("cfg-ai").value === "none"; });
   $("cfg-ai-key-row").hidden = ($("cfg-ai").value === "none");

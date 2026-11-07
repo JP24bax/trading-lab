@@ -5,6 +5,11 @@ import numpy as np
 import pandas as pd
 
 
+class OrdenRechazada(RuntimeError):
+    """El bróker rechazó una orden concreta (activo suspendido, sin opciones a esa expiración, etc.).
+    No significa que la sesión esté rota: el bot se salta la señal y sigue."""
+
+
 class SimBroker:
     name = "sim"
 
@@ -28,6 +33,9 @@ class SimBroker:
         return self.payout, "sintético"
 
     synthetic = True
+
+    def abierto(self, asset, minutes=1):
+        return True
 
     def candles(self, asset, size=60, count=200):
         r = self.rng.normal(0, 0.0004, count + 1)
@@ -166,6 +174,22 @@ class IQBroker:
         df["t"] = df["from"]
         return df[["open", "high", "low", "close", "t"]].reset_index(drop=True)
 
+    def abierto(self, asset, minutes=1):
+        """True/False si el bróker dice que el activo está abierto para esa expiración; None si no se pudo saber
+        (en ese caso NO se bloquea nada). Consulta cacheada 2 min: la API tarda varios segundos."""
+        try:
+            cache = getattr(self, "_abierto_cache", None)
+            if cache is None or time.time() - cache[0] > 120:
+                cache = (time.time(), self.api.get_all_open_time())
+                self._abierto_cache = cache
+            tipo = "turbo" if minutes <= 5 else "binary"       # IQ llama «turbo» a las de hasta 5 min
+            info = cache[1].get(tipo, {}).get(asset)
+            if isinstance(info, dict) and "open" in info:
+                return bool(info["open"])
+        except Exception:
+            pass
+        return None
+
     def buy(self, asset, amount, direction, minutes):
         act = "call" if direction == 1 else "put"
         try:
@@ -174,7 +198,7 @@ class IQBroker:
             raise RuntimeError(f"Error de red/comunicación al enviar orden: {e}")
 
         if not ok or not oid:
-            raise RuntimeError(f"Orden rechazada por el bróker. Motivo/ID: {oid}")
+            raise OrdenRechazada(f"Orden rechazada por el bróker. Motivo/ID: {oid}")
 
         return oid
 

@@ -16,7 +16,7 @@ from ai_filter import PROVIDERS, ai_veto
 import backtest as bt
 import filtros as flt
 from backtest import check_strategy, search
-from broker import IQBroker, SimBroker
+from broker import IQBroker, OrdenRechazada, SimBroker
 from strategies import STRATEGIES
 
 HERE = os.path.dirname(sys.executable if getattr(sys, "frozen", False) else os.path.abspath(__file__))
@@ -24,6 +24,11 @@ HERE = os.path.dirname(sys.executable if getattr(sys, "frozen", False) else os.p
 # para no perder el historial (hacen falta 100-200 operaciones para evaluar una estrategia).
 DATA_DIR = os.getenv("TRADINGLAB_DATA_DIR") or HERE
 STATE_FILE = os.path.join(DATA_DIR, "session_state.json")
+
+# Tras rechazar una orden, ese activo se deja en pausa unos minutos; y si fallan varias órdenes SEGUIDAS
+# (en cualquier activo) se detiene la sesión, porque algo más grave pasa.
+ENFRIAMIENTO_RECHAZO_S = 300
+MAX_FALLOS_SEGUIDOS = 5
 
 STOP = threading.Event()
 STOP_SOFT = threading.Event()
@@ -228,6 +233,9 @@ def cmd_run(a):
     tz = int(getattr(a, "tz_offset", flt.TZ_COLOMBIA))
     rotar = bool(getattr(a, "rotar_estrategia", False)) and a.strategy == "auto"
     cache_payout = {}                                              # asset -> (instante, payout)
+    en_pausa = {}                                                  # asset -> instante hasta el que no se opera
+    fallos_seguidos = 0
+    avisado_cerrado = {}                                           # asset -> último estado informado
 
     ranking = _ranking_estrategias(b, a)
     idx_estrategia = 0
@@ -288,6 +296,19 @@ def cmd_run(a):
 
                 if sig == 0: continue
 
+                # ── ¿Se puede operar ahora este activo? ─────────────────────
+                if time.time() < en_pausa.get(asset, 0):
+                    bloquear("activo en pausa", asset, "activo en pausa tras un rechazo del bróker")
+                    continue
+                abierto = b.abierto(asset, a.expiry)
+                if abierto is False:
+                    if avisado_cerrado.get(asset) is not False:
+                        ON_EVENT("log", text=f"⏸ {asset} no está disponible en el bróker para {a.expiry} min ahora; se esperan señales cuando reabra.")
+                    avisado_cerrado[asset] = False
+                    bloqueos["activo cerrado"] = bloqueos.get("activo cerrado", 0) + 1
+                    continue
+                avisado_cerrado[asset] = True
+
                 # ── Filtros de contexto ─────────────────────────────────────
                 try:
                     payout_now = payout_vigente(asset)
@@ -328,11 +349,24 @@ def cmd_run(a):
                 ON_EVENT("badge_status", state="TRADE_IN_PROGRESS", text="Operación en Curso")
                 try:
                     order = b.buy(asset, current_amount, sig, a.expiry)
+                    fallos_seguidos = 0
                     ON_EVENT("log", text=f"🚀 Orden enviada en {asset} ({'CALL' if sig==1 else 'PUT'}) por {current_amount} {cur}. Esperando cierre...")
                 except Exception as e:
-                    ON_EVENT("log", text=f"🚨 ALERTA: Orden pausada ({e})")
-                    ON_EVENT("conn_status", state="DISCONNECTED", msg="Orden rechazada")
-                    return
+                    fallos_seguidos += 1
+                    rechazo = isinstance(e, OrdenRechazada)
+                    ON_EVENT("badge_status", state="WAITING", text="Analizando Mercado")
+                    if fallos_seguidos >= MAX_FALLOS_SEGUIDOS:
+                        ON_EVENT("log", text=f"🚨 {fallos_seguidos} órdenes seguidas fallaron (última: {e}). Se detiene la sesión; revisa el bróker.")
+                        ON_EVENT("conn_status", state="DISCONNECTED", msg="Órdenes rechazadas")
+                        return
+                    if rechazo:
+                        en_pausa[asset] = time.time() + ENFRIAMIENTO_RECHAZO_S
+                        ON_EVENT("log", text=f"⚠ Orden rechazada en {asset} ({e}). Se omite esta señal y {asset} queda en pausa "
+                                             f"{ENFRIAMIENTO_RECHAZO_S // 60} min. Fallos seguidos: {fallos_seguidos}/{MAX_FALLOS_SEGUIDOS}.")
+                    else:
+                        ON_EVENT("log", text=f"⚠ No se pudo enviar la orden en {asset} ({e}). Se omite la señal. "
+                                             f"Fallos seguidos: {fallos_seguidos}/{MAX_FALLOS_SEGUIDOS}.")
+                    continue
 
                 if not a.sim: time.sleep(a.expiry * 60 + 2)
 

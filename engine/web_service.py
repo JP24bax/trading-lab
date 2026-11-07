@@ -17,6 +17,7 @@ import asyncio
 import json
 import os
 import threading
+import hmac
 import time
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
@@ -25,6 +26,7 @@ from typing import Any, Dict, List, Optional, Set
 import numpy as np
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 import bot
@@ -42,6 +44,28 @@ async def _ciclo_vida(_app: FastAPI):
 
 
 app = FastAPI(title="TradingLab Engine", version="1.1.0", lifespan=_ciclo_vida)
+
+# ── Token de acceso (opcional) ──────────────────────────────────────────────
+# Si defines TRADINGLAB_TOKEN en el servidor, TODA la API (menos /health y el preflight CORS) exige la cabecera
+# X-TradingLab-Token con ese valor, y el WebSocket el parámetro ?token=. Sin la variable todo queda abierto,
+# como antes. Se lee en cada petición para poder probarlo y rotarlo sin tocar el código.
+def _token() -> str:
+    return os.getenv("TRADINGLAB_TOKEN", "").strip()
+
+
+def _token_valido(dado: str) -> bool:
+    return hmac.compare_digest((dado or "").encode(), _token().encode())
+
+
+# Se registra ANTES que CORS: CORS queda como capa externa y así hasta los 401 llevan sus cabeceras.
+@app.middleware("http")
+async def _exigir_token(request, call_next):
+    if _token() and request.method != "OPTIONS" and request.url.path != "/health":
+        if not _token_valido(request.headers.get("x-tradinglab-token", "")):
+            return JSONResponse({"detail": "No autorizado: falta el token de acceso del motor o es incorrecto."},
+                                status_code=401)
+    return await call_next(request)
+
 
 # La web corre en localhost:3000 (dev) y en Vercel (prod). CLIENT_URL permite
 # anadir el dominio real de produccion sin tocar el codigo (var. de entorno).
@@ -200,6 +224,7 @@ def health() -> dict:
         "status": "ok",
         "sesion_activa": sesion.activo,
         "estrategias": len(STRATEGIES),
+        "auth": bool(_token()),
         "server_time": time.time(),
     }
 
@@ -404,6 +429,9 @@ def ai_etiquetas() -> dict:
 @app.websocket("/ws")
 async def ws_socket(ws: WebSocket):
     await ws.accept()
+    if _token() and not _token_valido(ws.query_params.get("token", "")):
+        await ws.close(code=4401)          # el navegador no puede mandar cabeceras en un WebSocket: va por la URL
+        return
     clientes.add(ws)
     try:
         # Estado inicial: el cliente recién conectado recibe la sesión persistida.

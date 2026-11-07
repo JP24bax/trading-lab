@@ -392,8 +392,15 @@
             <input id="cfg-engine-url" type="url" placeholder="http://localhost:8100 o https://mi-motor.up.railway.app" style="flex: 1;">
           </label>
         </div>
+        <div class="fila-botones" style="flex-wrap: wrap; gap: 10px; margin-top: 8px;">
+          <label class="campo-capital" style="flex: 1; min-width: 300px;">Token de acceso del motor (opcional):
+            <input id="cfg-token" type="password" autocomplete="off" placeholder="el valor de TRADINGLAB_TOKEN en el servidor" style="flex: 1;">
+          </label>
+        </div>
         <p class="nota-grafica">En local déjalo en http://localhost:8100. Para usar la web publicada en Vercel,
-          despliega el motor (ver bot-desktop/DESPLEGAR.md) y pon aquí su URL pública.</p>
+          despliega el motor (ver engine/DESPLEGAR.md) y pon aquí su URL pública. Si defines <b>TRADINGLAB_TOKEN</b> en
+          el servidor, nadie sin ese token puede iniciar sesiones ni leer tus operaciones. Se guarda solo en este
+          navegador.</p>
         <div class="fila-botones" style="flex-wrap: wrap; gap: 10px;">
           <label class="campo-capital">Modo:
             <select id="cfg-modo">
@@ -431,6 +438,8 @@
             </select>
           </label>
         </div>
+        <p class="nota-grafica">Se cargan las 92 estrategias del motor al abrir la pestaña. Para la prueba de demo (100-200
+          operaciones) elige UNA fija: «Automática» puede elegir otra cada vez que inicias el bot.</p>
       </div>
 
       <div class="tarjeta">

@@ -21,6 +21,9 @@ HTTP/WebSocket para que la web de TradingLab (publicada en Vercel) lo use desde 
    - `GROQ_API_KEY` o `GEMINI_API_KEY`: tu clave de IA (opcional, el filtro IA)
    - `IQ_EMAIL` / `IQ_PASSWORD`: opcional. Permiten que el Backtest descargue el histórico real de IQ Option
      sin enviar credenciales desde el navegador.
+   - `TRADINGLAB_TOKEN`: **recomendado.** Una contraseña larga que inventes. Con ella definida, la API y el WebSocket
+     rechazan a quien no la conozca (sin ella, cualquiera con la URL puede iniciar sesiones, leer tus operaciones y
+     cambiar claves de IA). Pon el mismo valor en la web → Configuración → «Token de acceso del motor».
    - `TRADINGLAB_DATA_DIR`: carpeta de un **volumen persistente** (Railway → Volumes, p. ej. `/data`).
      Sin esto el historial de operaciones se borra en cada despliegue y nunca llegarás a las 100-200
      operaciones que hacen falta para evaluar una estrategia.
@@ -39,6 +42,7 @@ HTTP/WebSocket para que la web de TradingLab (publicada en Vercel) lo use desde 
 cd engine
 pip install -r requirements.txt
 python test_motor.py        # opcional: comprueba que todo funciona
+# (laboratorio de la web, desde la raíz del repo: node test-motor-binario.mjs)
 uvicorn web_service:app --host 0.0.0.0 --port 8100
 # detrás de nginx/caddy con HTTPS (obligatorio: la web de Vercel es https
 # y los navegadores bloquean websocket inseguro desde https).
