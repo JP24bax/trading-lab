@@ -12,8 +12,17 @@ function urlMotor() {
   } catch { }
   return "http://localhost:8100";
 }
+function tokenMotor() {
+  try {
+    const guardada = JSON.parse(localStorage.getItem("tradinglab.motor.cfg") || "null");
+    return (guardada && guardada.engine_token) || "";
+  } catch { return ""; }
+}
 function MOTOR_HTTP() { return urlMotor(); }
-function MOTOR_WS() { return urlMotor().replace(/^http/, "ws") + "/ws"; }
+function MOTOR_WS() {
+  const t = tokenMotor();
+  return urlMotor().replace(/^http/, "ws") + "/ws" + (t ? `?token=${encodeURIComponent(t)}` : "");
+}
 
 let socket = null;
 let reintentos = 0;
@@ -44,9 +53,10 @@ export function conectarMotor() {
     }
   };
 
-  socket.onclose = () => {
+  socket.onclose = (ev) => {
     socket = null;
-    emitir("conn_status", { state: "DISCONNECTED", msg: "Motor sin conexión" });
+    const sinToken = ev && ev.code === 4401;
+    emitir("conn_status", { state: "DISCONNECTED", msg: sinToken ? "Token de acceso del motor inválido o ausente (Configuración)" : "Motor sin conexión" });
     programarReconexion();
   };
 
@@ -82,6 +92,8 @@ function emitir(kind, datos) {
 // ── API HTTP del motor ──────────────────────────────────────────────────────
 async function api(path, cuerpo = null) {
   const opciones = { method: cuerpo ? "POST" : "GET", headers: { "Content-Type": "application/json" } };
+  const t = tokenMotor();
+  if (t) opciones.headers["X-TradingLab-Token"] = t;
   if (cuerpo) opciones.body = JSON.stringify(cuerpo);
   const r = await fetch(MOTOR_HTTP() + path, opciones);
   if (!r.ok) {

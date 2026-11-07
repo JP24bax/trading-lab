@@ -166,6 +166,136 @@ def test_grupos_pequenos_son_ruido():
     assert horas["10h"]["lectura"].startswith("ruido")
 
 
+
+# ── Robustez ante rechazos del bróker ───────────────────────────────────────
+def _correr_bot(broker, max_trades=2, espera_max=40, parar_a_los=None):
+    """Ejecuta cmd_run con un bróker de prueba y devuelve (logs, hilos_ok). No toca session_state.json real."""
+    import tempfile
+    import threading
+    import time as _t
+    from types import SimpleNamespace
+    import bot
+    from strategies import STRATEGIES
+
+    logs = []
+    viejo = (bot.ON_EVENT, bot.STATE_FILE, bot.broker_from_args, bot.ENFRIAMIENTO_RECHAZO_S, dict(STRATEGIES))
+    bot.ON_EVENT = lambda kind, **d: logs.append(d.get("text", "")) if kind == "log" else None
+    bot.STATE_FILE = os.path.join(tempfile.mkdtemp(), "estado.json")
+    bot.broker_from_args = lambda a: broker
+    bot.ENFRIAMIENTO_RECHAZO_S = 0
+    STRATEGIES["_siempre_call"] = lambda df: pd.Series(1, index=df.index)
+    a = SimpleNamespace(sim=True, assets=["EURUSD"], amount=5000, expiry=1, history=600, strategy="_siempre_call",
+                        max_loss=10**9, max_streak=99, max_trades=max_trades, risk_pct=1.0,
+                        filtro_volatilidad=False, filtro_tendencia=False, payout_minimo=0.5, ai="none")
+    bot.STOP.clear()
+    if parar_a_los:
+        threading.Timer(parar_a_los, bot.STOP.set).start()
+    hilo = threading.Thread(target=bot.cmd_run, args=(a,), daemon=True)
+    try:
+        hilo.start()
+        hilo.join(espera_max)
+        vivo = hilo.is_alive()
+        bot.STOP.set()
+        hilo.join(5)
+    finally:
+        bot.ON_EVENT, bot.STATE_FILE, bot.broker_from_args, bot.ENFRIAMIENTO_RECHAZO_S = viejo[:4]
+        STRATEGIES.clear()
+        STRATEGIES.update(viejo[4])
+        bot.STOP.clear()
+    return logs, not vivo
+
+
+def test_un_rechazo_no_para_la_sesion():
+    from broker import OrdenRechazada, SimBroker
+
+    class Inestable(SimBroker):
+        compras = 0
+
+        def buy(self, *a, **k):
+            Inestable.compras += 1
+            if Inestable.compras <= 2:
+                raise OrdenRechazada("Orden rechazada por el bróker. Motivo/ID: Cannot purchase an option (the asset is not available at the moment.)")
+            return super().buy(*a, **k)
+
+    logs, termino = _correr_bot(Inestable(), max_trades=2)
+    assert termino, "la sesión no terminó sola"
+    assert sum("rechazada" in l for l in logs) == 2, "debía registrar los 2 rechazos"
+    assert sum("Orden enviada" in l for l in logs) >= 2, "tras los rechazos debía seguir operando"
+    assert any("Límite de sesión" in l for l in logs), "debía llegar al límite de operaciones, no abortar por el rechazo"
+
+
+def test_muchos_fallos_seguidos_detienen_la_sesion():
+    from broker import OrdenRechazada, SimBroker
+
+    class Roto(SimBroker):
+        def buy(self, *a, **k):
+            raise OrdenRechazada("rechazo permanente")
+
+    logs, termino = _correr_bot(Roto(), max_trades=5)
+    assert termino
+    assert any("órdenes seguidas fallaron" in l for l in logs)
+
+
+def test_activo_cerrado_no_envia_ordenes():
+    from broker import SimBroker
+
+    class Cerrado(SimBroker):
+        intentos = 0
+
+        def abierto(self, asset, minutes=1):
+            return False
+
+        def buy(self, *a, **k):
+            Cerrado.intentos += 1
+            return super().buy(*a, **k)
+
+    logs, _ = _correr_bot(Cerrado(), max_trades=5, parar_a_los=4)
+    assert Cerrado.intentos == 0, "se intentó comprar en un activo cerrado"
+    assert sum("no está disponible" in l for l in logs) == 1, "el aviso debe salir una sola vez, no cada vela"
+
+
+# ── Token de acceso ─────────────────────────────────────────────────────────
+def test_token_de_acceso():
+    from fastapi.testclient import TestClient
+    from starlette.websockets import WebSocketDisconnect
+    import web_service as ws
+
+    viejo = os.environ.get("TRADINGLAB_TOKEN")
+    try:
+        os.environ.pop("TRADINGLAB_TOKEN", None)
+        with TestClient(ws.app) as c:
+            assert c.get("/strategies").status_code == 200, "sin token configurado todo debe seguir abierto"
+            assert c.get("/health").json()["auth"] is False
+
+        os.environ["TRADINGLAB_TOKEN"] = "secreto-123"
+        with TestClient(ws.app) as c:
+            assert c.get("/strategies").status_code == 401
+            assert c.get("/strategies", headers={"X-TradingLab-Token": "mal"}).status_code == 401
+            assert c.get("/strategies", headers={"X-TradingLab-Token": "secreto-123"}).status_code == 200
+            assert c.post("/session/stop", json={"modo": "now"}).status_code == 401
+            assert c.get("/session/state").status_code == 401, "las operaciones no deben leerse sin token"
+            h = c.get("/health")
+            assert h.status_code == 200 and h.json()["auth"] is True        # /health queda abierto
+            pre = c.options("/strategies", headers={"Origin": "http://localhost:3000",
+                                                    "Access-Control-Request-Method": "GET",
+                                                    "Access-Control-Request-Headers": "x-tradinglab-token"})
+            assert pre.status_code == 200, "el preflight CORS no debe pedir token"
+            r = c.get("/strategies", headers={"Origin": "http://localhost:3000"})
+            assert r.headers.get("access-control-allow-origin") == "http://localhost:3000", "el 401 debe llevar cabeceras CORS"
+            try:
+                with c.websocket_connect("/ws?token=mal") as w:
+                    w.receive_text()
+                assert False, "el WebSocket aceptó un token incorrecto"
+            except WebSocketDisconnect as e:
+                assert e.code == 4401
+            with c.websocket_connect("/ws?token=secreto-123") as w:
+                assert '"kind": "init"' in w.receive_text()
+    finally:
+        if viejo is None:
+            os.environ.pop("TRADINGLAB_TOKEN", None)
+        else:
+            os.environ["TRADINGLAB_TOKEN"] = viejo
+
 if __name__ == "__main__":
     pruebas = [(k, v) for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     fallos = 0
